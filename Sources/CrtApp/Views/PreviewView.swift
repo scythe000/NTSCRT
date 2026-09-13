@@ -218,12 +218,26 @@ struct PreviewView: NSViewRepresentable {
                 // consume it with no further downscaling.
                 var chainSource = source
                 var spec = state.downscaleSpec
-                if state.ntscEnabled, let baked = state.processedSourceTexture {
+                if state.ntscEnabled, let cached = state.cachedChainInput {
+                    // Frame cache hit: NTSC and downscale already applied.
+                    chainSource = cached
+                    spec = nil
+                } else if state.ntscEnabled, let baked = state.processedSourceTexture {
                     // Pipelined playback already ran the NTSC stage on a
-                    // background thread; the chain input is ready. The
-                    // downscale still runs (in the encode below), and the
-                    // compare side keeps using the clean `source`.
-                    chainSource = baked
+                    // background thread. Downscale into a texture of our own
+                    // so the frame cache can keep it (pool memory is
+                    // recycled); the compare side keeps using the clean
+                    // `source`. No room in the cache → downscale in the
+                    // encode below as before.
+                    if state.frameCacheHasRoom(forChainInputOf: baked, downscale: spec),
+                       let copy = state.pipeline.makeChainInputCopy(
+                            source: baked, downscale: spec, commandBuffer: cb) {
+                        state.cacheChainInput(copy, forFrame: state.currentFrameIndex)
+                        chainSource = copy
+                        spec = nil
+                    } else {
+                        chainSource = baked
+                    }
                 } else if state.ntscEnabled, let stage = state.ntscStage {
                     do {
                         chainSource = try state.pipeline.prepareChainInput(
@@ -279,6 +293,15 @@ struct PreviewView: NSViewRepresentable {
                     cb.addCompletedHandler { _ in
                         Coordinator.writeDump(texture: drawable.texture, to: dumpPath)
                     }
+                }
+            }
+            // CRT_CACHE_CHECK: dump exactly the requested playback frame.
+            if let req = state.compositeDumpRequest,
+               state.currentFrameIndex == req.frame, state.playbackLoops >= req.minLoop {
+                state.dumpServedFromCache = state.cachedChainInput != nil
+                state.compositeDumpRequest = nil
+                cb.addCompletedHandler { _ in
+                    Coordinator.writeDump(texture: drawable.texture, to: req.path)
                 }
             }
             cb.commit()

@@ -128,7 +128,7 @@ struct ContentView: View {
                 || env["CRT_VIDEO_TL_TEST"] != nil || env["CRT_PLAY_BENCH"] != nil || env["CRT_LOOP_TEST"] != nil || env["CRT_STILL_LOOP_TEST"] != nil || env["CRT_PLAY_FRAME_CHECK"] != nil
                 || env["CRT_COMPARE_OFF"] == "1" || env["CRT_WINDOW_SIZE"] != nil
                 || env["CRT_ZOOM"] != nil
-                || env["CRT_DOWNSCALE_W"] != nil else { return }
+                || env["CRT_DOWNSCALE_W"] != nil || env["CRT_CACHE_CHECK"] != nil else { return }
         var tries = 0
         while tries < 100 && !((state.sourceTexture != nil) && state.chain != nil) {
             try? await Task.sleep(for: .milliseconds(100))
@@ -260,6 +260,29 @@ struct ContentView: View {
             if let out = env["CRT_BENCH_OUT"] {
                 try? (verdict + "\n").write(toFile: out, atomically: true, encoding: .utf8)
             }
+            exit(ok ? 0 : 1)
+        }
+        // CRT_CACHE_CHECK=<out.png>: play the clip so the frame cache fills,
+        // then on the second loop dump the composite at a fixed frame,
+        // asserting it was served from the cache. The same run with
+        // CRT_FRAME_CACHE_OFF=1 dumps the live-rendered frame on loop one;
+        // the two files must be byte-identical (compare with `cmp`).
+        if let out = env["CRT_CACHE_CHECK"] {
+            guard let vs = state.videoSource else { print("CACHECHK FAIL: not a video"); exit(1) }
+            let target = vs.totalFrames / 2
+            let minLoop = AppState.frameCacheOff ? 0 : 1
+            state.compositeDumpRequest = .init(frame: target, minLoop: minLoop, path: out)
+            state.togglePlayback()
+            var waited = 0
+            while state.compositeDumpRequest != nil && waited < 600 {
+                try? await Task.sleep(for: .milliseconds(100))
+                waited += 1
+            }
+            state.stopPlayback()
+            try? await Task.sleep(for: .milliseconds(300))   // let the dump land
+            let served = state.dumpServedFromCache
+            let ok = served == !AppState.frameCacheOff
+            print("CACHECHK \(ok ? "PASS" : "FAIL") frame \(target) loop \(state.playbackLoops) servedFromCache=\(served.map(String.init) ?? "never-dumped") cacheOff=\(AppState.frameCacheOff)")
             exit(ok ? 0 : 1)
         }
         // CRT_PLAY_BENCH=<seconds>: play the loaded video and report the

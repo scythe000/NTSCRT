@@ -95,6 +95,33 @@ public final class Pipeline {
         return scratch
     }
 
+    /// A standalone copy of the chain input for `source` — downscaled by
+    /// `spec`, or a plain copy when there is no downscale — in a fresh
+    /// private texture the caller owns. Playback frames live in pool memory
+    /// the producer recycles, so anything kept beyond the current draw (the
+    /// frame cache) has to be copied out first.
+    public func makeChainInputCopy(source: MTLTexture,
+                                   downscale spec: DownscaleSpec?,
+                                   commandBuffer cb: MTLCommandBuffer) -> MTLTexture? {
+        let d = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: source.pixelFormat,
+            width: spec?.width ?? source.width,
+            height: spec?.height ?? source.height,
+            mipmapped: false)
+        d.usage = [.shaderRead, .shaderWrite]
+        d.storageMode = .private
+        guard let tex = context.device.makeTexture(descriptor: d) else { return nil }
+        if let spec {
+            context.downscaler.encode(into: cb, source: source,
+                                      destination: tex, method: spec.method)
+        } else {
+            guard let blit = cb.makeBlitCommandEncoder() else { return nil }
+            blit.copy(from: source, to: tex)
+            blit.endEncoding()
+        }
+        return tex
+    }
+
     private func obtainDownscaleTexture(for spec: DownscaleSpec,
                                         sourceFormat: MTLPixelFormat) -> MTLTexture {
         if let cached = downscaleCache, cached.spec == spec,

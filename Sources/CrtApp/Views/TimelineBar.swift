@@ -130,6 +130,7 @@ struct TimelineBar: View {
                 )
 
             ticks(width: w)
+            cachedStrip(width: w)
 
             // Track line
             Capsule()
@@ -177,6 +178,20 @@ struct TimelineBar: View {
             }
             .offset(x: min(max(x, 2), w - 12), y: 0)
             .allowsHitTesting(false)
+        }
+    }
+
+    /// Frames already in the RAM-preview cache, as a thin green line under
+    /// the ruler — the After Effects render bar. It fills in while the video
+    /// sits paused; playback inside green costs no NTSC work per frame.
+    private func cachedStrip(width w: CGFloat) -> some View {
+        let total = CGFloat(max(1, state.videoSource?.totalFrames ?? 0))
+        return ForEach(state.cachedRanges, id: \.lowerBound) { r in
+            Rectangle()
+                .fill(Color.green.opacity(0.6))
+                .frame(width: max(1, CGFloat(r.count) / total * w), height: 2)
+                .offset(x: CGFloat(r.lowerBound) / total * w, y: rulerHeight - 3)
+                .allowsHitTesting(false)
         }
     }
 

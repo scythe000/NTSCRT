@@ -25,7 +25,22 @@ struct TransportBar: View {
                 .disabled(state.exportInProgress)
                 .help(state.videoPlaying ? "Pause" : "Play the video in the preview (with all effects applied)")
 
-                Slider(value: idx, in: 0...Double(max(1, total - 1)), step: 1)
+                VStack(spacing: 1) {
+                    Slider(value: idx, in: 0...Double(max(1, total - 1)), step: 1)
+                    // RAM-preview render bar (see TimelineBar.cachedStrip);
+                    // inset to roughly match the slider's thumb travel.
+                    GeometryReader { g in
+                        let inset: CGFloat = 8
+                        let w = max(1, g.size.width - 2 * inset)
+                        ForEach(state.cachedRanges, id: \.lowerBound) { r in
+                            Rectangle()
+                                .fill(Color.green.opacity(0.6))
+                                .frame(width: max(1, CGFloat(r.count) / CGFloat(total) * w), height: 2)
+                                .offset(x: inset + CGFloat(r.lowerBound) / CGFloat(total) * w)
+                        }
+                    }
+                    .frame(height: 2)
+                }
 
                 Text("\(state.currentFrameIndex + 1)/\(total)  ·  \(String(format: "%.2fs", Double(state.currentFrameIndex) / Double(max(1, vs.frameRate))))  ·  \(String(format: "%.0f", vs.frameRate)) fps")
                     .font(.system(.caption, design: .monospaced))

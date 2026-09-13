@@ -51,7 +51,7 @@ On a **video**, the timeline replaces the transport bar and takes its length and
 
 - The Intel half of the universal build is community-tested, not author-tested (see the note up top).
 - The NTSC stage runs on the CPU at your source's full resolution — with **Animate** on or during video playback, 4K+ sources will noticeably drop the preview frame rate. Exports always render every frame regardless.
-- Video playback decodes and runs the analog stage on a background pipeline and plays in real time, dropping the occasional frame when a spike hits (the NLE approach) rather than slowing down. Very large sources can still exceed what the pipeline can produce in real time; exports always render every frame regardless.
+- Video playback decodes and runs the analog stage on a background pipeline and plays in real time, dropping the occasional frame when a spike hits (the NLE approach) rather than slowing down. On top of that, finished frames are kept in a RAM preview (the After Effects model): while a video sits paused the app keeps rendering ahead through the clip — the green line under the scrubber shows how far it has got — and once a loop is covered it plays with no per-frame CPU work at all, and scrubbing inside the green is instant. Any change to the NTSC, downscale or timeline settings starts it over. The cache is capped at a quarter of memory (at most 1 GB, roughly a minute of 320px-wide frames); past that the rest of the clip streams live. Exports always render every frame regardless.
 - A few crt-royale parameters are compile-time disabled in the shader itself (marked "static in this shader build") — they do nothing in RetroArch either.
 - No undo — save Presets before big experiments.
 

@@ -51,6 +51,14 @@ public final class PlaybackPipeline {
         /// Per-frame settings for keyframed playback (frame index → JSON).
         private var perFrameJSON: (@Sendable (Int) -> String?)?
         private var generation: Int
+        /// Frame-cache probe: (frameIndex, generation) → already cached, so
+        /// the producer skips the NTSC step for that frame (it still decodes
+        /// it — the clean frame feeds the compare side).
+        private var isCached: (@Sendable (Int, Int) -> Bool)?
+
+        public func setCacheProbe(_ probe: (@Sendable (Int, Int) -> Bool)?) {
+            lock.lock(); isCached = probe; lock.unlock()
+        }
 
         public init(enabled: Bool, baseJSON: String?,
                     perFrameJSON: (@Sendable (Int) -> String?)?,
@@ -74,10 +82,11 @@ public final class PlaybackPipeline {
 
         func snapshot() -> (enabled: Bool, baseJSON: String?,
                             perFrameJSON: (@Sendable (Int) -> String?)?,
-                            generation: Int) {
+                            generation: Int,
+                            isCached: (@Sendable (Int, Int) -> Bool)?) {
             lock.lock()
             defer { lock.unlock() }
-            return (enabled, baseJSON, perFrameJSON, generation)
+            return (enabled, baseJSON, perFrameJSON, generation, isCached)
         }
     }
 
@@ -126,6 +135,19 @@ public final class PlaybackPipeline {
             stats.superseded += due.count - 1
             stats.takes += 1
             return (take, dropped)
+        }
+
+        /// The oldest fresh frame, in order and regardless of schedule — for
+        /// pre-rendering, which wants every frame rather than the one due.
+        func takeOldest(generation: Int) -> Output? {
+            cond.lock()
+            defer { cond.broadcast(); cond.unlock() }
+            while let first = buffer.first, first.generation != generation {
+                buffer.removeFirst()
+                stats.staleGen += 1
+            }
+            guard !buffer.isEmpty else { return nil }
+            return buffer.removeFirst()
         }
 
         func statsLine() -> String {
@@ -184,6 +206,7 @@ public final class PlaybackPipeline {
     }
 
     public func hasOutput() -> Bool { queue.hasOutput() }
+    public func takeOldest(generation: Int) -> Output? { queue.takeOldest(generation: generation) }
     public func takeStatsLine() -> String { queue.statsLine() }
     public func firstQueuedIndex() -> Int? { queue.peekFirstAbsoluteIndex() }
 
@@ -249,7 +272,8 @@ public final class PlaybackPipeline {
                                          absolute: absolute,
                                          generation: snap.generation,
                                          json: snap.perFrameJSON?(frameIndex) ?? snap.baseJSON,
-                                         wantsNtsc: snap.enabled))
+                                         wantsNtsc: snap.enabled
+                                             && !(snap.isCached?(frameIndex, snap.generation) ?? false)))
                 }
                 frameIndex = (frameIndex + 1) % total
                 absolute += 1

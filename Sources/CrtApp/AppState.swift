@@ -82,32 +82,98 @@ final class AppState {
     /// downscaled on the GPU); the compare split keeps using the clean
     /// `sourceTexture`. nil = process normally on the main thread.
     private(set) var processedSourceTexture: MTLTexture?
-    /// Bumped on any user edit of NTSC settings; queued pipeline frames baked
-    /// with an older generation are discarded rather than shown.
+    /// Bumped on any edit upstream of the shader chain — NTSC settings, the
+    /// NTSC toggle, downscale settings, the timeline; queued pipeline frames
+    /// and cached chain inputs from an older generation are discarded.
     private(set) var ntscGeneration: Int = 0
+
+    // MARK: - frame cache (RAM preview)
+
+    /// Chain inputs kept per video frame across loops; see ChainInputCache.
+    /// CRT_FRAME_CACHE_OFF=1 disables it (A/B and byte-comparison runs).
+    let chainInputCache = ChainInputCache()
+    static let frameCacheOff = ProcessInfo.processInfo.environment["CRT_FRAME_CACHE_OFF"] == "1"
+    /// Chain input for the current video frame when it came from the cache
+    /// (NTSC + downscale already applied); nil = not cached this frame.
+    private(set) var cachedChainInput: MTLTexture?
+    var currentCacheStamp: ChainInputCache.Stamp {
+        .init(generation: ntscGeneration, downscale: downscaleSpec)
+    }
+    /// Cached runs of frames for the render bar under the scrubber; updated
+    /// at most a few times a second so it doesn't invalidate views per frame.
+    private(set) var cachedRanges: [Range<Int>] = []
+    private var cachedRangesUpdatedAt = ContinuousClock.now
+    private(set) var playbackCacheHits = 0
+    /// Loop wraps since play was pressed.
+    private(set) var playbackLoops = 0
+
+    /// CRT_CACHE_CHECK: dump the composite when playback shows `frame` on or
+    /// after loop `minLoop`; `servedFromCache` records how that frame's
+    /// chain input was sourced. Set by the dev hook, cleared by the preview.
+    struct CompositeDumpRequest { let frame: Int; let minLoop: Int; let path: String }
+    var compositeDumpRequest: CompositeDumpRequest?
+    var dumpServedFromCache: Bool?
+
+    private var cacheProbe: (@Sendable (Int, Int) -> Bool)? {
+        guard !Self.frameCacheOff else { return nil }
+        let cache = chainInputCache
+        return { frame, gen in cache.isCached(frame: frame, generation: gen) }
+    }
+
+    func frameCacheHasRoom(forChainInputOf source: MTLTexture, downscale: DownscaleSpec?) -> Bool {
+        guard !Self.frameCacheOff, videoSource != nil else { return false }
+        let bytes = ChainInputCache.byteCount(width: downscale?.width ?? source.width,
+                                              height: downscale?.height ?? source.height)
+        return chainInputCache.hasRoom(for: bytes)
+    }
+
+    /// Called by the preview once it has copied a playback frame's chain
+    /// input into a texture of its own.
+    func cacheChainInput(_ texture: MTLTexture, forFrame frame: Int) {
+        guard !Self.frameCacheOff, videoSource != nil else { return }
+        chainInputCache.insert(frame: frame, texture: texture, stamp: currentCacheStamp)
+        updateCachedRanges()
+    }
+
+    private func updateCachedRanges(force: Bool = false) {
+        let now = ContinuousClock.now
+        guard force || cachedRangesUpdatedAt.duration(to: now) > .milliseconds(250) else { return }
+        cachedRangesUpdatedAt = now
+        cachedRanges = chainInputCache.cachedRanges(stamp: currentCacheStamp)
+    }
     /// Dropped-frame count for the current playback run (CRT_PERF_LOG).
     private(set) var playbackDropped: Int = 0
 
-    /// User changed VHS settings: invalidate pre-baked frames everywhere.
-    private func noteNtscSettingsEdited() {
+    /// Something upstream of the shader chain changed (NTSC settings or
+    /// toggle, downscale, timeline): invalidate pre-baked frames everywhere
+    /// — queued pipeline output, the frame cache — and pre-render again.
+    private func noteChainInputEdited() {
         ntscGeneration &+= 1
         processedSourceTexture = nil
+        cachedChainInput = nil
+        chainInputCache.invalidateAll()
+        cachedRanges = []
         pushPipelineConfig()
+        schedulePrerender()
     }
 
-    private func pushPipelineConfig() {
-        guard let playbackPipeline else { return }
+    /// Keyframed NTSC settings per frame index, nil when nothing is keyed.
+    private func perFrameNtscJSON() -> (@Sendable (Int) -> String?)? {
         let ev = (timelineEnabled && !timelineKeys.isEmpty) ? makeTimelineEvaluator() : nil
         let total = timelineTotalFrames
-        let perFrame: (@Sendable (Int) -> String?)? = ev.map { e in
+        return ev.map { e in
             { idx in
                 let t = total > 1 ? Double(idx) / Double(total - 1) : 0
                 return e.ntscJSON(at: t)
             }
         }
+    }
+
+    private func pushPipelineConfig() {
+        guard let playbackPipeline else { return }
         playbackPipeline.config.update(enabled: ntscEnabled,
                                baseJSON: ntscStage?.settingsJSON(),
-                               perFrameJSON: perFrame,
+                               perFrameJSON: perFrameNtscJSON(),
                                generation: ntscGeneration)
     }
 
@@ -123,6 +189,8 @@ final class AppState {
         guard let source = videoSource, !exportInProgress else { return }
         videoPlaying = true
         playbackDropped = 0
+        playbackLoops = 0
+        playbackCacheHits = 0
         playbackActivity = ProcessInfo.processInfo.beginActivity(
             options: [.userInitiated, .latencyCritical],
             reason: "video playback")
@@ -136,6 +204,7 @@ final class AppState {
         }
 
         playbackFPS = Double(max(1, source.frameRate))
+        stopPrerender()     // one producer at a time; playback fills the cache itself
         startPipeline(at: (currentFrameIndex + 1) % max(1, source.totalFrames))
         // Consumption is pull-model from the display link (see
         // consumePipelinedFrame); a nudge starts the first draw.
@@ -149,6 +218,7 @@ final class AppState {
                                           baseJSON: ntscStage?.settingsJSON(),
                                           perFrameJSON: nil,
                                           generation: ntscGeneration)
+        cfg.setCacheProbe(cacheProbe)
         let pipe = PlaybackPipeline(source: source, device: context.device,
                                     startFrame: frame, config: cfg)
         playbackPipeline = pipe
@@ -200,12 +270,23 @@ final class AppState {
         playbackDropped += dropped
         guard let out else { return }
 
+        if let prev = pipelineOutput, out.frameIndex < prev.frameIndex { playbackLoops += 1 }
         pipelineOutput = out
         suppressFrameReload = true
         currentFrameIndex = out.frameIndex
         suppressFrameReload = false
         sourceTexture = out.clean
         processedSourceTexture = out.processed
+        // The producer skips NTSC for frames the cache holds (processed is
+        // nil then); serve those from the cache. A miss here — evicted, or
+        // a stamp mismatch — falls through to main-thread processing.
+        if out.processed == nil, ntscEnabled, !Self.frameCacheOff {
+            cachedChainInput = chainInputCache.lookup(frame: out.frameIndex,
+                                                      stamp: currentCacheStamp)
+            if cachedChainInput != nil { playbackCacheHits += 1 }
+        } else {
+            cachedChainInput = nil
+        }
         // Playhead + keyframed shader params for this frame (librashader is
         // main-thread; NTSC is already baked).
         applyTimeline(atFrame: out.frameIndex)
@@ -217,8 +298,9 @@ final class AppState {
             let span = playbackLogStart.duration(to: .now)
             let s = Double(span.components.seconds)
                 + Double(span.components.attoseconds) / 1e18
-            fputs(String(format: "[play] displayed %.1f fps, dropped %d total — %@\n",
-                         48.0 / max(s, 0.001), playbackDropped,
+            fputs(String(format: "[play] displayed %.1f fps, dropped %d total, cache hits %d (%d frames, %d MB) — %@\n",
+                         48.0 / max(s, 0.001), playbackDropped, playbackCacheHits,
+                         chainInputCache.count, chainInputCache.bytes >> 20,
                          pipe.takeStatsLine() as NSString), stderr)
             playbackLogStart = .now
         }
@@ -265,7 +347,116 @@ final class AppState {
             ProcessInfo.processInfo.endActivity(activity)
             playbackActivity = nil
         }
+        schedulePrerender()     // fill in whatever playback didn't reach
     }
+
+    // MARK: - pre-render while paused (the After Effects render bar)
+
+    /// While a video sits paused, a background producer keeps decoding and
+    /// running the NTSC stage through the clip, and the results go into the
+    /// frame cache — so by the time play is pressed (or after one pass), the
+    /// whole loop plays with no CPU work per frame. Uses the same pipeline
+    /// as playback, consumed in order instead of by schedule.
+    private var prerenderPipeline: PlaybackPipeline?
+    private var prerenderTask: Task<Void, Never>?
+    private var prerenderDebounce: Task<Void, Never>?
+    private(set) var prerenderActive = false
+
+    /// (Re)start filling the cache shortly. Debounced: settings edits arrive
+    /// per slider tick, and every one of them invalidates the cache.
+    private func schedulePrerender() {
+        prerenderDebounce?.cancel()
+        guard !Self.frameCacheOff, videoSource != nil else { return }
+        prerenderDebounce = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            self?.startPrerender()
+        }
+    }
+
+    private func startPrerender() {
+        stopPrerender()
+        guard !Self.frameCacheOff, let vs = videoSource, ntscEnabled,
+              !videoPlaying, !exportInProgress,
+              !(vs.needsPreferredTransform || Self.forceSeekDecode) else { return }
+        let total = max(1, vs.totalFrames)
+        guard chainInputCache.count(matching: currentCacheStamp) < total else {
+            updateCachedRanges(force: true)
+            return
+        }
+        let cfg = PlaybackPipeline.Config(enabled: true,
+                                          baseJSON: ntscStage?.settingsJSON(),
+                                          perFrameJSON: perFrameNtscJSON(),
+                                          generation: ntscGeneration)
+        cfg.setCacheProbe(cacheProbe)
+        let pipe = PlaybackPipeline(source: vs, device: context.device,
+                                    startFrame: currentFrameIndex, config: cfg)
+        prerenderPipeline = pipe
+        prerenderActive = true
+        pipe.start()
+        let started = ContinuousClock.now
+        prerenderTask = Task { @MainActor [weak self] in
+            var produced = 0
+            while !Task.isCancelled {
+                guard let self, self.prerenderPipeline === pipe else { return }
+                if self.exportInProgress || self.videoPlaying {
+                    self.stopPrerender(); return
+                }
+                guard let out = pipe.takeOldest(generation: self.ntscGeneration) else {
+                    try? await Task.sleep(for: .milliseconds(10))
+                    continue
+                }
+                if let tex = out.processed,
+                   !self.chainInputCache.isCached(frame: out.frameIndex, generation: self.ntscGeneration) {
+                    guard self.ingestPrerendered(tex, frame: out.frameIndex) else {
+                        self.finishPrerender("cache full", produced: produced, since: started)
+                        return
+                    }
+                    produced += 1
+                }
+                if self.chainInputCache.count(matching: self.currentCacheStamp) >= total {
+                    self.finishPrerender("complete", produced: produced, since: started)
+                    return
+                }
+                await Task.yield()
+            }
+        }
+    }
+
+    /// Copy a producer frame's chain input out of pool memory into the cache.
+    private func ingestPrerendered(_ processed: MTLTexture, frame: Int) -> Bool {
+        let spec = downscaleSpec
+        guard frameCacheHasRoom(forChainInputOf: processed, downscale: spec),
+              let cb = context.queue.makeCommandBuffer(),
+              let copy = pipeline.makeChainInputCopy(source: processed, downscale: spec,
+                                                     commandBuffer: cb) else { return false }
+        cb.commit()
+        cb.waitUntilCompleted()     // the source slot is about to be recycled
+        chainInputCache.insert(frame: frame, texture: copy, stamp: currentCacheStamp)
+        updateCachedRanges()
+        return true
+    }
+
+    private func finishPrerender(_ reason: String, produced: Int, since: ContinuousClock.Instant) {
+        stopPrerender()
+        updateCachedRanges(force: true)
+        if Self.playLog {
+            let d = since.duration(to: .now)
+            let s = Double(d.components.seconds) + Double(d.components.attoseconds) / 1e18
+            fputs(String(format: "[prerender] %@: %d frames in %.1f s — cache %d frames, %d MB\n",
+                         reason as NSString, produced, s,
+                         chainInputCache.count, chainInputCache.bytes >> 20), stderr)
+        }
+    }
+
+    private func stopPrerender() {
+        prerenderTask?.cancel()
+        prerenderTask = nil
+        prerenderPipeline?.stop()
+        prerenderPipeline = nil
+        prerenderActive = false
+    }
+
     var videoSource: VideoSource? {
         if case .video(let v) = sourceKind { return v }
         return nil
@@ -286,14 +477,14 @@ final class AppState {
 
     // MARK: - downscale
 
-    var downscaleEnabled: Bool = true { didSet { markChainDirty() } }
+    var downscaleEnabled: Bool = true { didSet { markChainDirty(); noteChainInputEdited() } }
     /// Downscale is width-only: the horizontal resolution is chosen (or
     /// picked from a console preset), and the height follows the source's
     /// aspect ratio so any input shape works.
-    var downscaleWidth: Int = 320     { didSet { markChainDirty() } }
+    var downscaleWidth: Int = 320     { didSet { markChainDirty(); noteChainInputEdited() } }
     /// Selected preset label, purely cosmetic ("Custom" when hand-edited).
     var downscalePreset: String = "VGA (320px)"
-    var downscaleMethod: DownscaleMethod = .nearest { didSet { markChainDirty() } }
+    var downscaleMethod: DownscaleMethod = .nearest { didSet { markChainDirty(); noteChainInputEdited() } }
 
     /// Derived from the source aspect (rounded to even lines).
     var downscaleHeight: Int {
@@ -344,14 +535,19 @@ final class AppState {
     /// video. On a still the length is ours to choose; on a video the clip
     /// supplies it, and the playhead IS the video position — one time axis,
     /// not two disagreeing scrubbers.
+    // Any timeline change can alter the NTSC settings a given frame gets,
+    // so each one invalidates baked frames like a settings edit does.
     var timelineEnabled: Bool = false {
-        didSet { if !timelineEnabled { stopTimelinePreview() } }
+        didSet {
+            if !timelineEnabled { stopTimelinePreview() }
+            noteChainInputEdited()
+        }
     }
-    var timelineKeys: [Keyframe] = []
+    var timelineKeys: [Keyframe] = [] { didSet { noteChainInputEdited() } }
     /// Output length in seconds. Keyframe times are normalized (0…1), so
     /// changing the duration stretches the whole animation proportionally.
-    var timelineDuration: Double = 5.0
-    var timelineFPS: Int = 30
+    var timelineDuration: Double = 5.0 { didSet { noteChainInputEdited() } }
+    var timelineFPS: Int = 30 { didSet { noteChainInputEdited() } }
     /// Playhead position, normalized 0…1.
     private(set) var playheadT: Double = 0
     private(set) var timelinePlaying = false
@@ -578,7 +774,7 @@ final class AppState {
     /// Flat values in ntsc-rs preset-JSON form (includes "version").
     private(set) var ntscValues: [String: Any] = [:]
     var ntscEnabled: Bool = true {
-        didSet { noteNtscSettingsEdited(); markChainDirty() }
+        didSet { noteChainInputEdited(); markChainDirty() }
     }
     private(set) var ntscError: String?
 
@@ -588,7 +784,7 @@ final class AppState {
         ntscValues[name] = value
         pushNtscSettings()
         autoKeyIfParked()
-        noteNtscSettingsEdited()
+        noteChainInputEdited()
         markChainDirty()
     }
 
@@ -604,7 +800,7 @@ final class AppState {
         ntscValues = ntscDefaults
         pushNtscSettings()
         autoKeyIfParked()
-        noteNtscSettingsEdited()
+        noteChainInputEdited()
         markChainDirty()
     }
 
@@ -796,10 +992,14 @@ final class AppState {
     @MainActor
     private func reloadSource() async {
         stopPlayback()
+        stopPrerender()
         sourceTexture = nil
-        // A baked frame from the previous source must not survive into the
-        // new one — draw() prefers it over re-processing when NTSC is on.
+        // Nothing baked for the previous source may survive into the new
+        // one — draw() prefers baked/cached input over re-processing.
         processedSourceTexture = nil
+        cachedChainInput = nil
+        chainInputCache.invalidateAll()
+        cachedRanges = []
         sourceKind = nil
         sourceError = nil
         currentFrameIndex = 0
@@ -827,6 +1027,7 @@ final class AppState {
             }
         }
         markChainDirty()
+        schedulePrerender()     // a video starts filling its cache right away
     }
 
     @MainActor
@@ -835,7 +1036,11 @@ final class AppState {
         do {
             let tex = try await vs.frame(atIndex: currentFrameIndex)
             sourceTexture = tex
-            processedSourceTexture = nil    // draw re-processes on main
+            processedSourceTexture = nil    // draw re-processes on main…
+            // …unless the cache has this frame: scrubbing then costs only
+            // the seek-decode, not the NTSC pass.
+            cachedChainInput = Self.frameCacheOff ? nil
+                : chainInputCache.lookup(frame: currentFrameIndex, stamp: currentCacheStamp)
             // Scrubbing the transport moves the playhead too, so a keyframed
             // animation follows the frame you land on.
             applyTimeline(atFrame: currentFrameIndex)
@@ -1037,7 +1242,7 @@ final class AppState {
             }
             if let v = s["enabled"] as? Bool { shaderEnabled = v }
         }
-        noteNtscSettingsEdited()
+        noteChainInputEdited()
         if let v = dict["view"] as? [String: Any] {
             if let b = v["integerScale"] as? Bool { integerScale = b }
             if let b = v["animate"] as? Bool { animatePreview = b }
