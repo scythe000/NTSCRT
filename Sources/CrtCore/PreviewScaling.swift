@@ -54,13 +54,30 @@ public enum PreviewScaler {
 
         // Not integer-scaled: render at the drawable's own resolution (capped)
         // and fill it.
-        guard integerScale, inputWidth > 0, inputHeight > 0 else {
+        // Render at the drawable's own size and fill it — only for an input
+        // we can't reason about, or one too big to render at any multiple.
+        func fillAtDrawable() -> PreviewScaling {
             let scale = min(1.0, Double(maxLongEdge) / Double(max(dw, dh)))
-            let rw = max(64, Int(Double(dw) * scale))
-            let rh = max(64, Int(Double(dh) * scale))
-            return PreviewScaling(renderWidth: rw, renderHeight: rh,
+            return PreviewScaling(renderWidth: max(64, Int(Double(dw) * scale)),
+                                  renderHeight: max(64, Int(Double(dh) * scale)),
                                   displayWidth: dw, displayHeight: dh,
                                   displayMultiple: 0, renderMultiple: 0)
+        }
+        guard inputWidth > 0, inputHeight > 0 else { return fillAtDrawable() }
+
+        // Not integer-scaled: the image fills the drawable — but it is still
+        // rendered at the scanline floor and box-filtered down to size. The
+        // look stays window-independent, and a fractional rows-per-line
+        // ratio never reaches the shader: rendering straight into the
+        // drawable gave some source lines 2 rows and others 3, which banded.
+        guard integerScale else {
+            var rk = renderMultiple(forDisplay: 1, inputWidth: inputWidth, inputHeight: inputHeight,
+                                    minRenderMultiple: minRenderMultiple, maxLongEdge: maxLongEdge)
+            if rk > 1 && rk % 2 == 1 { rk -= 1 }     // odd multiples jitter glow shaders
+            guard max(inputWidth, inputHeight) * rk <= maxLongEdge else { return fillAtDrawable() }
+            return PreviewScaling(renderWidth: inputWidth * rk, renderHeight: inputHeight * rk,
+                                  displayWidth: dw, displayHeight: dh,
+                                  displayMultiple: 0, renderMultiple: rk)
         }
 
         // Largest whole multiple of the chain input that fits the drawable.

@@ -147,8 +147,14 @@ final class PreviewScalingTests: XCTestCase {
                                           integerScale: false)
             XCTAssertEqual(plan.displayWidth, dw)
             XCTAssertEqual(plan.displayHeight, dh)
-            XCTAssertFalse(plan.needsDownsample,
-                           "filling the drawable shouldn't need a downsample pass")
+            // Filling is a display property. The render still meets the
+            // scanline floor as a whole, even multiple of the input and is
+            // box-filtered to the drawable — rendering straight into the
+            // drawable gave fractional rows per source line, which banded.
+            XCTAssertGreaterThanOrEqual(plan.renderMultiple, PreviewScaler.minRenderMultiple)
+            XCTAssertEqual(plan.renderMultiple % 2, 0)
+            XCTAssertEqual(plan.renderWidth, 320 * plan.renderMultiple)
+            XCTAssertTrue(plan.needsDownsample)
         }
     }
 }

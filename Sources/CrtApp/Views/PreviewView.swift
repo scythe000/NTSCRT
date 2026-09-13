@@ -364,31 +364,9 @@ struct PreviewView: NSViewRepresentable {
             return (plan.renderWidth, plan.renderHeight)
         }
 
-        /// Area-downsampler + display-sized textures, allocated only when the
-        /// chain renders larger than the window can show.
-        private var downscaler: Downscaler?
-        private var fitTextures: [MTLTexture?] = [nil, nil]
-
-        private func obtainDownscaler() -> Downscaler? {
-            if let d = downscaler { return d }
-            downscaler = try? Downscaler(device: state.context.device)
-            return downscaler
-        }
-
-        private func obtainFitTexture(slot: Int, width: Int, height: Int,
-                                      format: MTLPixelFormat) -> MTLTexture? {
-            if let t = fitTextures[slot], t.width == width, t.height == height,
-               t.pixelFormat == format {
-                return t
-            }
-            let d = MTLTextureDescriptor.texture2DDescriptor(
-                pixelFormat: format, width: width, height: height, mipmapped: false)
-            d.usage = [.shaderRead, .shaderWrite, .renderTarget]
-            d.storageMode = .private
-            let t = state.context.device.makeTexture(descriptor: d)
-            fitTextures[slot] = t
-            return t
-        }
+        /// Fit + letterbox + compare/zoom/pan live in CrtCore so the offscreen
+        /// tests drive the very same code (see PreviewCompositorTests).
+        private lazy var compositor = PreviewCompositor(context: state.context)
 
         private func makeTarget(width: Int, height: Int) -> MTLTexture {
             let d = MTLTextureDescriptor.texture2DDescriptor(
@@ -437,275 +415,37 @@ struct PreviewView: NSViewRepresentable {
             } else {
                 intermediate = source
             }
-            blitScale(source: intermediate, into: target, cb: cb)
+            compositor.blitScale(source: intermediate, into: target,
+                                 background: backgroundColor, commandBuffer: cb)
         }
 
-        // MARK: - blit shaders (compile lazily)
-
-        private static let shaderSrc: String = """
-        #include <metal_stdlib>
-        using namespace metal;
-
-        struct VOut { float4 pos [[position]]; float2 uv; };
-
-        vertex VOut bv_vs(uint vid [[vertex_id]]) {
-            float2 p = float2((vid << 1) & 2, vid & 2);
-            VOut o;
-            o.pos = float4(p * 2.0 - 1.0, 0, 1);
-            o.uv  = float2(p.x, 1.0 - p.y);
-            return o;
-        }
-
-        // Blit for the shader-off/original view. Nearest for magnification
-        // (shows raw pixels of a small source instead of smearing them);
-        // the linear variant is used when minifying a full-res original.
-        fragment float4 bv_blit_fs(VOut in [[stage_in]],
-                                   texture2d<float> src [[texture(0)]]) {
-            constexpr sampler s(filter::nearest, address::clamp_to_edge);
-            return src.sample(s, in.uv);
-        }
-
-        fragment float4 bv_blit_linear_fs(VOut in [[stage_in]],
-                                          texture2d<float> src [[texture(0)]]) {
-            constexpr sampler s(filter::linear, address::clamp_to_edge);
-            return src.sample(s, in.uv);
-        }
-
-        // Composite with compare line + zoom + pan.
-        struct CompositeU {
-            float compareLineX;     // 0..1
-            int   compareEnabled;   // 0 or 1
-            float zoom;             // >= 1.0
-            float panX;
-            float panY;
-            int   useNearest;       // 1 when zoomed in (pixel inspection)
-            // Letterbox in PIXELS, not fractions: the offset must be a whole
-            // number of pixels or nearest sampling lands on texel boundaries
-            // (see the Swift side).
-            float dstW;
-            float dstH;
-            float tgtW;
-            float tgtH;
-            float offX;
-            float offY;
-        };
-
-        fragment float4 bv_composite_fs(VOut in [[stage_in]],
-                                        texture2d<float> primary [[texture(0)]],
-                                        texture2d<float> secondary [[texture(1)]],
-                                        constant CompositeU& u [[buffer(0)]])
-        {
-            constexpr sampler sampL(filter::linear, address::clamp_to_edge);
-            constexpr sampler sampN(filter::nearest, address::clamp_to_edge);
-
-            // Map the fragment to a target pixel, then normalise. Doing the
-            // letterbox in pixel space with a whole-pixel offset keeps the
-            // sample on texel centres for any drawable size.
-            float2 px = float2(in.uv.x * u.dstW - u.offX,
-                               in.uv.y * u.dstH - u.offY);
-            float2 uv = float2(px.x / u.tgtW, px.y / u.tgtH);
-            uv = (uv - 0.5) / u.zoom + 0.5 - float2(u.panX, u.panY);
-
-            // The compare line is drawn BEFORE the bounds check so it stays
-            // visible over the letterbox bars — otherwise dragging it to
-            // either edge (integer scale letterboxes by default) culls it
-            // and the divider appears to vanish.
-            if (u.compareEnabled != 0) {
-                float lineWidth = max(fwidth(in.uv.x) * 1.0, 0.0008);
-                if (abs(in.uv.x - u.compareLineX) < lineWidth) {
-                    return float4(1.0, 1.0, 1.0, 1.0);
-                }
-            }
-
-            // Out-of-bounds → background.
-            if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
-                return float4(0.05, 0.05, 0.06, 1.0);
-            }
-
-            float4 a = u.useNearest != 0 ? primary.sample(sampN, uv)
-                                         : primary.sample(sampL, uv);
-            float4 b = u.useNearest != 0 ? secondary.sample(sampN, uv)
-                                         : secondary.sample(sampL, uv);
-
-            float4 colour;
-            if (u.compareEnabled != 0) {
-                colour = (in.uv.x < u.compareLineX) ? a : b;
-            } else {
-                colour = a;
-            }
-            return colour;
-        }
-        """
-
-        private var blitPipeline: MTLRenderPipelineState?        // bv_blit_fs (nearest)
-        private var blitLinearPipeline: MTLRenderPipelineState?  // bv_blit_linear_fs
-        private var compositePipeline: MTLRenderPipelineState?   // bv_composite_fs
-        private var msl: MTLLibrary?
-
-        private func library() -> MTLLibrary? {
-            if let l = msl { return l }
-            msl = try? state.context.device.makeLibrary(source: Self.shaderSrc, options: nil)
-            return msl
-        }
-
-        private func obtainBlit(for fmt: MTLPixelFormat, linear: Bool) -> MTLRenderPipelineState? {
-            if linear, let p = blitLinearPipeline { return p }
-            if !linear, let p = blitPipeline { return p }
-            guard let lib = library() else { return nil }
-            let d = MTLRenderPipelineDescriptor()
-            d.vertexFunction = lib.makeFunction(name: "bv_vs")
-            d.fragmentFunction = lib.makeFunction(name: linear ? "bv_blit_linear_fs" : "bv_blit_fs")
-            d.colorAttachments[0].pixelFormat = fmt
-            let p = try? state.context.device.makeRenderPipelineState(descriptor: d)
-            if linear { blitLinearPipeline = p } else { blitPipeline = p }
-            return p
-        }
-
-        private func obtainComposite(for fmt: MTLPixelFormat) -> MTLRenderPipelineState? {
-            if let p = compositePipeline { return p }
-            guard let lib = library() else { return nil }
-            let d = MTLRenderPipelineDescriptor()
-            d.vertexFunction = lib.makeFunction(name: "bv_vs")
-            d.fragmentFunction = lib.makeFunction(name: "bv_composite_fs")
-            d.colorAttachments[0].pixelFormat = fmt
-            compositePipeline = try? state.context.device.makeRenderPipelineState(descriptor: d)
-            return compositePipeline
-        }
-
-        private func blitScale(source: MTLTexture, into dst: MTLTexture, cb: MTLCommandBuffer) {
-            // Magnifying a small (downscaled) source → nearest, to show its
-            // raw pixels. Minifying a full-res original → linear, to avoid
-            // single-tap aliasing.
-            let minifying = source.width > dst.width
-            guard let pipe = obtainBlit(for: dst.pixelFormat, linear: minifying) else { return }
-            let pass = MTLRenderPassDescriptor()
-            pass.colorAttachments[0].texture = dst
-            pass.colorAttachments[0].loadAction = .clear
-            pass.colorAttachments[0].storeAction = .store
-            pass.colorAttachments[0].clearColor = backgroundColor
-            guard let enc = cb.makeRenderCommandEncoder(descriptor: pass) else { return }
-            enc.setRenderPipelineState(pipe)
-            enc.setFragmentTexture(source, index: 0)
-            enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 3)
-            enc.endEncoding()
-        }
-
-        private struct CompositeU {
-            var compareLineX: Float
-            var compareEnabled: Int32
-            var zoom: Float
-            var panX: Float
-            var panY: Float
-            var useNearest: Int32
-            var dstW: Float
-            var dstH: Float
-            var tgtW: Float
-            var tgtH: Float
-            var offX: Float
-            var offY: Float
-        }
+        // MARK: - composite (fit + letterbox + compare + zoom/pan)
 
         private func composite(primaryIn: MTLTexture,
                                secondaryIn: MTLTexture,
                                into dst: MTLTexture,
                                cb: MTLCommandBuffer) {
-            var primary = primaryIn
-            var secondary = secondaryIn
-
-            // The chain renders at a whole multiple that may exceed what's
-            // shown (integer scale keeps a floor so the shader has room to
-            // draw scanlines). Step it down to the DISPLAY size — an exact
-            // integer factor, so it's a clean box filter — then letterbox
-            // that.
-            //
-            // Zoomed in, sample the FULL render instead: the step-down is a
-            // box filter, and at small display multiples it averages the
-            // scanlines nearly flat (a 6×→2× fit leaves almost none), which
-            // reads as "the CRT shader stopped working" under magnification.
-            // The letterbox geometry below always uses the DISPLAY size —
-            // the composite samples by normalized uv, so which texture backs
-            // it never moves the framing, and toggling integer scale still
-            // doesn't appear to change the zoom level (the regression that
-            // once made this step unconditional).
-            let zoomedIn = state.zoom > 1.001
-            var displayW = primary.width, displayH = primary.height
-            if let plan = scaling, plan.needsDownsample {
-                displayW = plan.displayWidth
-                displayH = plan.displayHeight
-                if !zoomedIn, let down = obtainDownscaler() {
-                    if let fitP = obtainFitTexture(slot: 0, width: displayW, height: displayH,
-                                                   format: primary.pixelFormat) {
-                        down.encode(into: cb, source: primary, destination: fitP, method: .area)
-                        primary = fitP
-                    }
-                    if state.compareEnabled, secondaryIn !== primaryIn,
-                       let fitS = obtainFitTexture(slot: 1, width: displayW, height: displayH,
-                                                   format: secondaryIn.pixelFormat) {
-                        down.encode(into: cb, source: secondaryIn, destination: fitS, method: .area)
-                        secondary = fitS
-                    } else if secondaryIn === primaryIn {
-                        secondary = primary
-                    }
-                }
-            }
-
-            guard let pipe = obtainComposite(for: dst.pixelFormat) else { return }
-            let pass = MTLRenderPassDescriptor()
-            pass.colorAttachments[0].texture = dst
-            pass.colorAttachments[0].loadAction = .clear
-            pass.colorAttachments[0].storeAction = .store
-            pass.colorAttachments[0].clearColor = backgroundColor
-            guard let enc = cb.makeRenderCommandEncoder(descriptor: pass) else { return }
-            enc.setRenderPipelineState(pipe)
-            enc.setFragmentTexture(primary, index: 0)
-            enc.setFragmentTexture(secondary, index: 1)
-            // Integer scale letterboxes the (smaller) target at 1:1 in the
-            // drawable; otherwise the target is stretched to fill it.
-            //
-            // The offset must be a WHOLE number of pixels. Centring on a half
-            // pixel (which happens whenever drawable − target is odd) puts
-            // every nearest-filtered sample exactly on a texel boundary, and
-            // float rounding then duplicates some rows and drops others —
-            // horizontal banding that appears and disappears as the window is
-            // resized. Measured on a 1280 target: an odd delta duplicates
-            // ~150 of 1280 rows, an even delta none.
+            // The plan comes from renderTargetSize() on the chain render;
+            // composite-only draws (zoom, pan, compare) reuse it.
+            guard let plan = scaling else { return }
+            let geometry = PreviewGeometry.make(
+                plan: plan, drawableWidth: dst.width, drawableHeight: dst.height,
+                integerScale: state.integerScale,
+                zoom: state.zoom, panX: state.panX, panY: state.panY)
+            compositor.composite(primary: primaryIn, secondary: secondaryIn, into: dst,
+                                 plan: plan, geometry: geometry,
+                                 overlay: .init(compareEnabled: state.compareEnabled,
+                                                compareLineX: state.compareLineX),
+                                 background: backgroundColor, commandBuffer: cb)
             if Self.scaleLog {
-                let dx = dst.width - displayW, dy = dst.height - displayH
-                let key = "\(dst.width)x\(dst.height)/\(primaryIn.width)/\(displayW)/\(primary.width)"
+                let sampled = compositor.lastSampledSize
+                let dx = dst.width - geometry.targetWidth, dy = dst.height - geometry.targetHeight
+                let key = "\(dst.width)x\(dst.height)/\(primaryIn.width)/\(geometry.targetWidth)/\(sampled.width)"
                 if key != Self.lastScaleLogKey {
                     Self.lastScaleLogKey = key
-                    fputs("[scale] drawable \(dst.width)x\(dst.height) chain-render \(primaryIn.width)x\(primaryIn.height) displayed \(displayW)x\(displayH) sampled \(primary.width)x\(primary.height) delta \(dx),\(dy) \(dx % 2 == 0 && dy % 2 == 0 ? "even" : "ODD")\n", stderr)
+                    fputs("[scale] drawable \(dst.width)x\(dst.height) chain-render \(primaryIn.width)x\(primaryIn.height) displayed \(geometry.targetWidth)x\(geometry.targetHeight) sampled \(sampled.width)x\(sampled.height) delta \(dx),\(dy) \(dx % 2 == 0 && dy % 2 == 0 ? "even" : "ODD")\n", stderr)
                 }
             }
-            // Integer scale letterboxes the displayed image at 1:1; without
-            // it the render fills the drawable. Geometry comes from the
-            // display size, never from whichever texture is being sampled.
-            let stretch = !state.integerScale
-            let tgtW = Float(stretch ? dst.width : displayW)
-            let tgtH = Float(stretch ? dst.height : displayH)
-            let offX = stretch ? 0 : Float((dst.width - displayW) / 2)
-            let offY = stretch ? 0 : Float((dst.height - displayH) / 2)
-            var u = CompositeU(
-                compareLineX: state.compareLineX,
-                compareEnabled: state.compareEnabled ? 1 : 0,
-                zoom: max(1, state.zoom),
-                panX: state.panX,
-                panY: state.panY,
-                // Zoomed in = pixel inspection: sample the render targets
-                // nearest so magnification doesn't blur them. At fit, linear
-                // gives the smoother final-image resample. Integer scale is
-                // exact multiples, so nearest is always right there.
-                useNearest: (state.zoom > 1.001 || state.integerScale) ? 1 : 0,
-                dstW: Float(dst.width),
-                dstH: Float(dst.height),
-                tgtW: tgtW,
-                tgtH: tgtH,
-                offX: offX,
-                offY: offY
-            )
-            enc.setFragmentBytes(&u, length: MemoryLayout<CompositeU>.size, index: 0)
-            enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 3)
-            enc.endEncoding()
         }
 
         private func clearAndPresent(drawable: CAMetalDrawable, cb: MTLCommandBuffer) {
