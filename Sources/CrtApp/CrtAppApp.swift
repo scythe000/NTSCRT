@@ -17,8 +17,16 @@ struct CrtAppApp: App {
     @State private var bootstrapError: String?
     @State private var appState: AppState?
 
+    /// The window title carries the build version so a stale local bundle
+    /// is visible at a glance: releases show "NTSCRT 0.10.1", dev bundles
+    /// the git describe string, and the bare executable "dev".
+    private static let windowTitle: String = {
+        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        return "NTSCRT \(v ?? "dev")"
+    }()
+
     var body: some Scene {
-        WindowGroup("NTSCRT") {
+        WindowGroup(Self.windowTitle) {
             Group {
                 if let appState {
                     ContentView()

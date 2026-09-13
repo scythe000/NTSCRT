@@ -50,8 +50,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleName</key>                   <string>NTSCRT</string>
     <key>CFBundleDisplayName</key>            <string>NTSCRT</string>
     <key>CFBundlePackageType</key>            <string>APPL</string>
-    <key>CFBundleShortVersionString</key>     <string>0.1</string>
-    <key>CFBundleVersion</key>                <string>1</string>
+    <key>CFBundleShortVersionString</key>     <string>REPLACE_VERSION</string>
+    <key>CFBundleVersion</key>                <string>REPLACE_VERSION</string>
     <key>LSMinimumSystemVersion</key>         <string>14.0</string>
     <key>NSHighResolutionCapable</key>        <true/>
     <key>CFBundleIconFile</key>            <string>AppIcon</string>
@@ -70,6 +70,12 @@ PLIST
 # can find them when launched from anywhere (LSEnvironment paths must be absolute).
 PRESETS_ABS="$(cd Vendor/slang-shaders && pwd)"
 /usr/bin/sed -i '' "s|REPLACE_PRESETS_PATH|$PRESETS_ABS|" "$APP/Contents/Info.plist"
+
+# Stamp the git version so the window title says exactly which code this
+# is (e.g. "0.10.1-2-g41a5813-dirty"). A dev bundle that silently reports
+# a stale version once cost an afternoon.
+VERSION="$(git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || true)"
+/usr/bin/sed -i '' "s|REPLACE_VERSION|${VERSION:-dev}|" "$APP/Contents/Info.plist"
 
 # Ad-hoc sign so Gatekeeper lets it run.
 codesign --force --deep --sign - "$APP" >/dev/null

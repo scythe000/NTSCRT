@@ -155,6 +155,14 @@ if [[ "$IDENTITY" != "-" ]]; then
   codesign --force --timestamp --sign "$IDENTITY" "$DMG"
 fi
 
+# The local bundle (what the Desktop shortcut launches) becomes the
+# shipped app, bit for bit — so "I'm still seeing the bug" can never again
+# mean "the shortcut points at last week's build".
+rm -rf build/NTSCRT.app
+mkdir -p build
+cp -R "$APP" build/NTSCRT.app
+echo "refreshed build/NTSCRT.app with the released app"
+
 echo
 echo "done: $DMG"
 if [[ "$IDENTITY" == "-" ]]; then
