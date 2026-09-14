@@ -70,6 +70,12 @@ pub struct NtscrtApp {
     // ---- export ----
     pub export_height: u32,
     pub snap_to_scanline_grid: bool,
+    /// Movie export settings. Ignored when the source is a still and
+    /// `export_still_frames` is None — that case writes a PNG.
+    pub export_job: crate::video::ExportJob,
+    /// Frames of VHS motion to write when exporting a *still* as video.
+    /// None keeps the still export a PNG, as it has always been.
+    pub export_still_frames: Option<u32>,
 
     // ---- gpu ----
     pub(crate) pipeline: Pipeline,
@@ -125,6 +131,8 @@ impl NtscrtApp {
             frame_count: 0,
             export_height: 960,
             snap_to_scanline_grid: false,
+            export_job: crate::video::ExportJob::default(),
+            export_still_frames: None,
             pipeline,
             preview_texture: None,
             pipeline_cache,
@@ -541,9 +549,59 @@ impl NtscrtApp {
         (!notes.is_empty()).then(|| notes.join(" \u{2014} "))
     }
 
+    /// Whether Export writes a movie rather than a PNG: a loaded video
+    /// always does, and a still does when asked for VHS-motion frames.
+    pub(crate) fn exports_video(&self) -> bool {
+        self.video.is_some() || self.export_still_frames.is_some()
+    }
+
+    /// Render the whole source and encode it.
+    ///
+    /// Runs on its own headless device for the same reason `export_png`
+    /// does: a long export must not stall the UI's swapchain. It is still
+    /// synchronous, so the window is unresponsive while it runs — the macOS
+    /// build shows live progress in the toolbar, which this does not yet.
+    pub(crate) fn export_video(&mut self, dest: PathBuf) {
+        let Some(source_path) = self.source_path.clone() else {
+            self.error = Some("Nothing loaded to export".into());
+            return;
+        };
+        let settings = self.render_settings();
+        let mut job = crate::video::ExportJob {
+            dest,
+            ..self.export_job
+        };
+        job.gif = self.export_job.gif;
+        // A still needs an explicit frame count; a clip brings its own.
+        let still = self
+            .export_still_frames
+            .filter(|_| self.video.is_none())
+            .map(|n| (n, 24.0));
+
+        let result = crate::HeadlessRenderer::new().and_then(|mut r| {
+            crate::video::export(&mut r, &settings, &job, &source_path, still, &mut |_, _| {})
+        });
+        match result {
+            Ok(s) => {
+                self.status = Some(format!(
+                    "Exported {} ({}x{}, {} frames, {:.1} MB)",
+                    job.dest.display(),
+                    s.width,
+                    s.height,
+                    s.frames,
+                    s.bytes as f64 / (1024.0 * 1024.0)
+                ));
+                self.error = None;
+            }
+            Err(e) => self.error = Some(format!("Export failed: {e}")),
+        }
+    }
+
     /// Shared by the sidebar's Export button and the CLI path.
-    pub(crate) fn export_png(&mut self, dest: PathBuf) {
-        let settings = crate::RenderSettings {
+    /// The current configuration as render settings. Shared by every export
+    /// path so a still and a movie cannot drift apart.
+    pub(crate) fn render_settings(&self) -> crate::RenderSettings {
+        crate::RenderSettings {
             downscale_width: self.downscale_enabled.then_some(self.downscale_width),
             downscale_method: self.downscale_method,
             ntsc_enabled: self.ntsc_enabled,
@@ -553,7 +611,11 @@ impl NtscrtApp {
             output_height: self.export_height,
             snap_to_scanline_grid: self.snap_to_scanline_grid,
             frame_count: self.frame_count,
-        };
+        }
+    }
+
+    pub(crate) fn export_png(&mut self, dest: PathBuf) {
+        let settings = self.render_settings();
         // A separate headless device keeps the export off the presenting
         // device, so a long render cannot stall the UI's swapchain.
         match crate::HeadlessRenderer::new()

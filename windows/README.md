@@ -61,7 +61,7 @@ dependencies are optimised even in debug builds for the same reason.
 
 ## Using the app
 
-**Toolbar** — **Open** (Ctrl+O) an image, **Export PNG** (Ctrl+E), the
+**Toolbar** — **Open** (Ctrl+O) an image or video, **Export** (Ctrl+E), the
 **Preset** menu, and the view controls. **Animate** runs the preview
 continuously so tape noise, jitter and interlacing actually move — leave it on
 for the real experience. **Compare** splits the preview: full pipeline left of
@@ -92,7 +92,19 @@ quietly dropping someone's animation.
   Grayed-out controls tell you which switch activates them; many CRT parameters
   only apply when their feature (curvature, mask, geometry mode) is on.
 - **Export** — output height, with a scanline-grid warning when the result
-  would band.
+  would band. A loaded video exports as H.264, HEVC, ProRes 422 / 422 HQ or
+  GIF; a still exports a PNG, or video if you tick **Export as video (VHS
+  motion)** — the signal stage animates on its own, so a still can make a
+  clip without a timeline. GIF gets its own width and rate and estimates the
+  file size before writing it.
+
+**Video** — open a clip and a transport bar docks under the preview:
+play/pause (Space), a frame-accurate scrubber, and a render bar showing how
+far the RAM preview has got. Playback decodes and runs the signal stage on a
+background thread and plays in real time, dropping a frame when a spike hits
+rather than slowing down. Finished frames are cached, so a covered loop
+replays with no per-frame CPU work and scrubbing inside it is instant. Any
+change to the NTSC, downscale or shader settings starts it over.
 
 **Scanline banding.** CRT shaders draw scanlines in *output* pixels, so if the
 export height isn't a whole multiple of the downscale height, one source line
@@ -118,9 +130,19 @@ rule of thumb, crisp scanlines want 3+ output rows per downscale line.
 .\target\release\ntscrt-smoke.exe --list-params royale    # a shader's parameters, ranges and defaults
 ```
 
+```powershell
+# Video
+.\target\release\ntscrt-smoke.exe clip.mp4 --video-info
+.\target\release\ntscrt-smoke.exe clip.mp4 --playback 96      # throughput, drops, cache hits
+.\target\release\ntscrt-smoke.exe clip.mp4 --export out.mp4 --format h264 --quality high
+.\target\release\ntscrt-smoke.exe clip.mp4 --export out.gif --format gif --gif-width 480 --gif-fps 12
+.\target\release\ntscrt-smoke.exe still.png --export out.mp4 --still-frames 48   # VHS motion
+```
+
 `--preset`, `--shader`, `--downscale <px|off>`, `--method`, `--height`,
-`--snap`, `--no-ntsc`, `--ntsc-preset <file>`, `--frame <n>`. Flags after
-`--preset` override it, so a preset works as a starting point.
+`--snap`, `--no-ntsc`, `--ntsc-preset <file>`, `--frame <n>`, plus the video
+flags above. Flags after `--preset` override it, so a preset works as a
+starting point.
 
 Useful for confirming a build renders correctly on a given adapter, for
 byte-comparing output across revisions, and — via `--list-params` — for
@@ -135,10 +157,12 @@ same for the bundled `presets/` JSON.
 
 ## Differences from the macOS build
 
-- **No video yet.** Stills only: load an image, export a PNG. Video playback,
-  the keyframe timeline, and MP4/ProRes/GIF export are not built. The pipeline
-  and the export path are already frame-indexed and deterministic, so video is
-  additive rather than a redesign.
+- **No keyframe timeline.** Video plays, scrubs and exports, but the
+  keyframe animation the macOS build offers is not here. Presets that carry
+  keyframes load and are preserved on save; they just don't animate.
+- **Export blocks the window.** A movie export runs synchronously, so the UI
+  is unresponsive until it finishes. The macOS build shows live progress in
+  the toolbar.
 - **No HEIC.** The `image` crate covers PNG/JPEG/BMP/TIFF/WebP; HEIC has no
   pure-Rust decoder. The macOS build gets it free from ImageIO.
 - **Not frame-identical to the Mac build.** The macOS build pins librashader to
@@ -159,7 +183,12 @@ On an RTX 3090 (Vulkan backend):
 - Every rule in `param_gates.rs` names a parameter that exists in the real
   shaders (checked against `--list-params` for all seven).
 - crt-royale, 320×240 → 1280×960, in 1.9s.
-- 46 tests pass (`cargo test --release`).
+- Video playback: 24.2 fps against a 24 fps clip, zero drops, the frame cache
+  serving every frame on the second loop. Same at 720p.
+- All five export formats produce valid files (checked with `ffprobe`), GIF
+  honouring its own width and rate. Loop 3 turns 48 frames into 144. A still
+  exported as video genuinely animates.
+- 88 tests pass (`cargo test --release`), no warnings.
 
 The GUI launches and runs clean; its visual layout has not been checked against
 the macOS app side by side.
