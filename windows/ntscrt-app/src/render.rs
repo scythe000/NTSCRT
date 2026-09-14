@@ -20,6 +20,9 @@ pub struct RenderSettings {
     /// Applied to the source before the signal stage. See
     /// `ntscrt_core::rotation`.
     pub rotation: ntscrt_core::Rotation,
+    /// Keyframe animation. When present and non-empty, the NTSC settings and
+    /// shader parameters are evaluated per frame instead of being fixed.
+    pub timeline: Option<ntscrt_core::Timeline>,
     /// ntsc-rs preset JSON. None keeps ntsc-rs defaults.
     pub ntsc_preset_json: Option<String>,
     pub shader_id: String,
@@ -40,6 +43,7 @@ impl Default for RenderSettings {
             downscale_method: DownscaleMethod::Area,
             ntsc_enabled: true,
             rotation: ntscrt_core::Rotation::None,
+            timeline: None,
             ntsc_preset_json: None,
             shader_id: "royale".to_string(),
             shader_params: Vec::new(),
@@ -63,12 +67,28 @@ pub struct FrameSequence {
     pub output_size: (u32, u32),
     downscale: Option<DownscaleSpec>,
     ntsc_enabled: bool,
+    /// Built once from the timeline plus the chain's own parameter bounds,
+    /// then read per frame.
+    evaluator: Option<ntscrt_core::TimelineEvaluator>,
+    /// Total frames the animation spans, for turning a frame index into a
+    /// position along the timeline.
+    timeline_frames: u32,
 }
 
 impl FrameSequence {
     /// The chain, for a caller that adjusts parameters between frames.
     pub fn chain(&self) -> &ShaderChain {
         &self.chain
+    }
+
+    /// Whether this sequence animates.
+    pub fn is_animated(&self) -> bool {
+        self.evaluator.is_some()
+    }
+
+    /// Frames the animation spans. 0 when there is none.
+    pub fn timeline_frames(&self) -> u32 {
+        if self.evaluator.is_some() { self.timeline_frames } else { 0 }
     }
 
     /// Whether the CPU signal stage runs for the frames that follow.
@@ -214,6 +234,33 @@ impl HeadlessRenderer {
         });
         let output_view = output.create_view(&Default::default());
 
+        // The evaluator needs the chain's declared parameter bounds, so it
+        // can only be built once the chain is loaded — an interpolated value
+        // has to land on a legal step, not halfway between two mask modes.
+        let (evaluator, timeline_frames) = match settings.timeline.as_ref() {
+            Some(tl) if tl.has_keys() => {
+                let meta: std::collections::BTreeMap<String, ntscrt_core::ShaderMeta> = chain
+                    .parameters()
+                    .iter()
+                    .map(|p| {
+                        (
+                            p.name.clone(),
+                            ntscrt_core::ShaderMeta {
+                                minimum: p.minimum,
+                                maximum: p.maximum,
+                                step: p.step,
+                            },
+                        )
+                    })
+                    .collect();
+                (
+                    ntscrt_core::TimelineEvaluator::new(tl, meta, ntscrt_core::timeline::ntsc_interp_table()),
+                    tl.frame_count(),
+                )
+            }
+            _ => (None, 0),
+        };
+
         Ok(FrameSequence {
             chain,
             output,
@@ -221,6 +268,8 @@ impl HeadlessRenderer {
             output_size,
             downscale,
             ntsc_enabled: settings.ntsc_enabled,
+            evaluator,
+            timeline_frames,
         })
     }
 
@@ -237,6 +286,22 @@ impl HeadlessRenderer {
         frame_count: usize,
         source_version: Option<i64>,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        // An animated sequence re-dials the whole effect before every frame.
+        // Keyframe times are proportional, so the frame index maps onto the
+        // timeline's own span rather than the clip's.
+        if let Some(ev) = &sequence.evaluator {
+            let total = sequence.timeline_frames.max(1);
+            let t = if total <= 1 {
+                0.0
+            } else {
+                (frame_count as u32 % total) as f64 / (total - 1) as f64
+            };
+            self.ntsc.set_settings_json(&ev.ntsc_json(t))?;
+            for (name, value) in ev.shader_params(t) {
+                sequence.chain.set_parameter(&name, value);
+            }
+        }
+
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("ntscrt.render") });

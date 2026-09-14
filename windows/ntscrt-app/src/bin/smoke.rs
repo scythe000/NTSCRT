@@ -29,6 +29,7 @@ USAGE:
     ntscrt-smoke --list-shaders
     ntscrt-smoke --list-params [shader-id]
     ntscrt-smoke --list-presets
+    ntscrt-smoke --timeline <preset> [--watch <ntsc-setting>]
     ntscrt-smoke --video-info <file>
 
 OPTIONS:
@@ -270,6 +271,61 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         return Ok(());
     }
+    // Evaluate a preset's timeline and print how a setting moves. This is
+    // how you check an animation is actually being applied rather than
+    // inferring it from frames that differ only by the signal stage's own
+    // frame-seeded noise.
+    if let Some(i) = args.iter().position(|a| a == "--timeline") {
+        let name = args.get(i + 1).ok_or("--timeline needs a preset")?;
+        let watch = args
+            .iter()
+            .position(|a| a == "--watch")
+            .and_then(|j| args.get(j + 1))
+            .cloned()
+            .unwrap_or_else(|| "vhs_edge_wave".to_string());
+
+        let path = resolve_preset(name)?;
+        let preset = ntscrt_app::app_preset::AppPreset::load(&path)?;
+        let Some(tl) = preset.timeline.filter(|t| t.has_keys()) else {
+            return Err(format!("'{name}' has no keyframes").into());
+        };
+        let ev = ntscrt_core::TimelineEvaluator::new(
+            &tl,
+            Default::default(),
+            ntscrt_core::timeline::ntsc_interp_table(),
+        )
+        .ok_or("could not build an evaluator")?;
+
+        println!(
+            "{name}: {} keyframes over {}s at {} fps ({} frames)",
+            tl.keys.len(),
+            tl.duration,
+            tl.fps,
+            tl.frame_count()
+        );
+        println!("static value of {watch}: {}", preset.ntsc.settings.get(&watch)
+            .map(|v| v.to_string()).unwrap_or_else(|| "-".into()));
+        println!("{:<7} {:<8} {}", "frame", "t", watch);
+        let total = tl.frame_count();
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        for f in 0..total {
+            let t = tl.t_for_frame(f);
+            let v = ev.ntsc_values(t).get(&watch).and_then(|v| v.as_f64());
+            if let Some(v) = v {
+                lo = lo.min(v);
+                hi = hi.max(v);
+                if f % (total / 12).max(1) == 0 || f == total - 1 {
+                    println!("{f:<7} {t:<8.4} {v:.4}");
+                }
+            }
+        }
+        if lo.is_finite() {
+            println!("range: {lo:.4} .. {hi:.4}");
+        }
+        return Ok(());
+    }
+
     if args.iter().any(|a| a == "--list-presets") {
         let found = ntscrt_app::app_preset::bundled();
         if found.is_empty() {
@@ -405,9 +461,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     settings.ntsc_preset_json = Some(p.ntsc.settings.to_string());
                 }
                 settings.shader_id = p.shader.preset.clone();
-                if p.has_keyframes() {
-                    eprintln!("note: '{name}' carries keyframes; this build has no timeline");
+                if let Some(tl) = &p.timeline {
+                    if tl.has_keys() {
+                        println!(
+                            "timeline: {} keyframes over {}s at {} fps",
+                            tl.keys.len(),
+                            tl.duration,
+                            tl.fps
+                        );
+                    }
                 }
+                settings.timeline = p.timeline.clone();
                 preset_params = p.shader.params.into_iter().collect();
             }
             other if other.starts_with("--") => {

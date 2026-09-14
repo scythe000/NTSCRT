@@ -103,10 +103,10 @@ pub struct NtscrtApp {
     /// `source_version` so it is re-uploaded only when the image changes.
     pub(crate) source_texture: Option<(i64, egui::TextureHandle)>,
 
-    /// Timeline section of the last preset loaded, kept verbatim. This build
-    /// has no keyframe animation, but saving must not destroy a preset's
-    /// keyframes — see `app_preset`.
-    pub(crate) loaded_timeline: Option<serde_json::Value>,
+    /// Keyframe animation for the loaded preset, if it has any.
+    pub timeline: Option<ntscrt_core::Timeline>,
+    /// Playhead position, 0..1 along the timeline.
+    pub playhead: f64,
 
     pub status: Option<String>,
     pub error: Option<String>,
@@ -158,7 +158,8 @@ impl NtscrtApp {
             preview_texture: None,
             pipeline_cache,
             source_texture: None,
-            loaded_timeline: None,
+            timeline: None,
+            playhead: 0.0,
             status: None,
             error: None,
             dirty: true,
@@ -561,7 +562,7 @@ impl NtscrtApp {
                 integer_scale: true,
             },
             rotation: self.rotation,
-            timeline: self.loaded_timeline.clone(),
+            timeline: self.timeline.clone(),
         }
     }
 
@@ -632,13 +633,11 @@ impl NtscrtApp {
         self.set_rotation(preset.rotation);
 
         if preset.has_keyframes() {
-            notes.push(
-                "this preset carries keyframes; this build has no timeline, so they are \
-                 preserved but not played"
-                    .to_string(),
-            );
+            let n = preset.timeline.as_ref().map(|t| t.keys.len()).unwrap_or(0);
+            notes.push(format!("{n} keyframes"));
         }
-        self.loaded_timeline = preset.timeline;
+        self.timeline = preset.timeline;
+        self.playhead = 0.0;
 
         self.mark_dirty();
         (!notes.is_empty()).then(|| notes.join(" \u{2014} "))
@@ -760,6 +759,7 @@ impl NtscrtApp {
             downscale_method: self.downscale_method,
             ntsc_enabled: self.ntsc_enabled,
             rotation: self.rotation,
+            timeline: self.timeline.clone(),
             ntsc_preset_json: self.ntsc.settings_json().ok(),
             shader_id: self.shader_id.clone(),
             shader_params: self.shader_params.iter().map(|(k, v)| (k.clone(), *v)).collect(),

@@ -12,10 +12,8 @@
 //! it passes straight through to the signal stage untouched, which is what
 //! keeps presets interchangeable with the ntsc-rs desktop app.
 //!
-//! The `timeline` section belongs to keyframe animation, which this build
-//! does not implement. It is deliberately preserved verbatim rather than
-//! dropped: loading a preset that carries keyframes and saving it again must
-//! not silently destroy someone's animation.
+//! The `timeline` section carries keyframe animation — see
+//! `ntscrt_core::timeline` for the model and how it interpolates.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -35,9 +33,9 @@ pub struct AppPreset {
     /// decoder ignores keys it doesn't know, so presets still move both ways.
     #[serde(default)]
     pub rotation: ntscrt_core::Rotation,
-    /// Opaque: read back out exactly as it came in. See the module note.
+    /// Keyframe animation. Absent in a preset that has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeline: Option<serde_json::Value>,
+    pub timeline: Option<ntscrt_core::Timeline>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -103,15 +101,9 @@ impl AppPreset {
         Ok(())
     }
 
-    /// Whether this preset carries keyframes this build cannot play back.
-    /// The UI says so on load rather than letting the animation go missing
-    /// without explanation.
+    /// Whether this preset carries keyframe animation.
     pub fn has_keyframes(&self) -> bool {
-        self.timeline
-            .as_ref()
-            .and_then(|t| t.get("keys"))
-            .and_then(|k| k.as_array())
-            .is_some_and(|k| !k.is_empty())
+        self.timeline.as_ref().is_some_and(|t| t.has_keys())
     }
 }
 
@@ -160,10 +152,17 @@ mod tests {
             },
             view: ViewSection::default(),
             rotation: ntscrt_core::Rotation::None,
-            timeline: Some(serde_json::json!({
-                "duration": 2, "enabled": false, "fps": 30,
-                "keys": [{ "t": 0.0 }]
-            })),
+            timeline: Some(ntscrt_core::Timeline {
+                duration: 2.0,
+                fps: 30.0,
+                enabled: false,
+                keys: vec![ntscrt_core::Keyframe {
+                    t: 0.0,
+                    easing: ntscrt_core::Easing::Linear,
+                    shader: Default::default(),
+                    ntsc: Default::default(),
+                }],
+            }),
         }
     }
 
@@ -194,17 +193,14 @@ mod tests {
         loaded.save(&path).unwrap();
         let again = AppPreset::load(&path).unwrap();
         assert!(again.has_keyframes(), "keyframes were dropped on re-save");
-        assert_eq!(
-            again.timeline.as_ref().unwrap()["keys"].as_array().unwrap().len(),
-            1
-        );
+        assert_eq!(again.timeline.as_ref().unwrap().keys.len(), 1);
         let _ = std::fs::remove_file(&path);
     }
 
     #[test]
     fn a_preset_without_keyframes_reports_none() {
         let mut p = sample();
-        p.timeline = Some(serde_json::json!({ "keys": [] }));
+        p.timeline = Some(ntscrt_core::Timeline::default());
         assert!(!p.has_keyframes());
         p.timeline = None;
         assert!(!p.has_keyframes());
