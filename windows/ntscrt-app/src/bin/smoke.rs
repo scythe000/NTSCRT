@@ -1,10 +1,10 @@
 //! Headless pipeline verifier — the Windows counterpart of the macOS
 //! `crt-smoke` target (`Sources/CrtSmoke/main.swift`).
 //!
-//! Runs an image through NTSC → downscale → CRT shader and writes a PNG,
-//! with no window and no GUI dependencies. Useful for checking that a build
-//! renders correctly on a given adapter, and for byte-comparing output
-//! between revisions.
+//! Runs an image or a video frame through NTSC → downscale → CRT shader and
+//! writes a PNG, with no window and no GUI dependencies. Useful for checking
+//! that a build renders correctly on a given adapter, and for byte-comparing
+//! output between revisions.
 //!
 //! ```text
 //! ntscrt-smoke <input> <output.png> [--shader royale] [--downscale 320]
@@ -12,11 +12,12 @@
 //!              [--ntsc-preset preset.json] [--frame N] [--list-shaders]
 //! ```
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::str::FromStr;
 
 use ntscrt_app::image_io::SourceImage;
+use ntscrt_app::video::{is_video_path, VideoSource};
 use ntscrt_app::{HeadlessRenderer, RenderSettings};
 use ntscrt_core::DownscaleMethod;
 
@@ -24,10 +25,11 @@ const USAGE: &str = "\
 ntscrt-smoke — headless NTSCRT pipeline verifier
 
 USAGE:
-    ntscrt-smoke <input-image> <output.png> [options]
+    ntscrt-smoke <input-image|video> <output.png> [options]
     ntscrt-smoke --list-shaders
     ntscrt-smoke --list-params [shader-id]
     ntscrt-smoke --list-presets
+    ntscrt-smoke --video-info <file>
 
 OPTIONS:
     --preset <name|file>  Load a full app preset (downscale + NTSC + shader).
@@ -39,7 +41,11 @@ OPTIONS:
     --snap                Snap output onto the scanline grid instead of supersampling.
     --no-ntsc             Skip the NTSC/VHS signal stage.
     --ntsc-preset <file>  ntsc-rs preset JSON (interchangeable with the ntsc-rs app).
-    --frame <n>           Frame index for the deterministic RNG (default: 0).
+    --frame <n>           Frame index: the deterministic RNG's seed, and which
+                          frame is decoded when the input is a video (default: 0).
+
+VIDEO:
+    --video-info <file>   Probe a clip and report size, rate and frame count.
 ";
 
 fn main() -> ExitCode {
@@ -51,6 +57,25 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Report what ffmpeg is available and what it says about a clip — the video
+/// counterpart of `--list-shaders`, and the first thing to run when video
+/// misbehaves on a machine.
+fn print_video_info(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    match ntscrt_app::video::ffmpeg::probe_tools() {
+        Ok(version) => println!("ffmpeg:  {version}"),
+        Err(e) => return Err(e.into()),
+    }
+    let video = VideoSource::open(path)?;
+    let i = &video.info;
+    println!("file:    {}", video.path.display());
+    println!("codec:   {}", i.video_codec);
+    println!("size:    {}x{}", i.width, i.height);
+    println!("rate:    {:.4} fps", i.frame_rate);
+    println!("length:  {:.3}s, {} frames", i.duration_seconds, i.total_frames);
+    println!("audio:   {}", if i.has_audio { "yes" } else { "none" });
+    Ok(())
 }
 
 /// Accept either a path to a preset file or the name of a bundled one.
@@ -103,6 +128,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 Err(e) => println!("  {name:<24} FAILED: {e}"),
             }
         }
+        return Ok(());
+    }
+
+    if let Some(i) = args.iter().position(|a| a == "--video-info") {
+        let path = args.get(i + 1).ok_or("--video-info needs a file")?;
+        print_video_info(Path::new(path))?;
         return Ok(());
     }
 
@@ -194,8 +225,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     settings.shader_params = preset_params;
 
-    let source = SourceImage::load(&input)
-        .map_err(|e| format!("could not read {}: {e}", input.display()))?;
+    // A video input renders one frame: `--frame` picks it, and the same index
+    // seeds the signal stage's RNG, so the still you get back is the frame
+    // the player would show at that position.
+    let source = if is_video_path(&input) {
+        let video = VideoSource::open(&input)?;
+        println!(
+            "video:   {}x{} {:.3} fps, {} frames ({:.2}s), {}",
+            video.info.width,
+            video.info.height,
+            video.info.frame_rate,
+            video.info.total_frames,
+            video.info.duration_seconds,
+            video.info.video_codec
+        );
+        video.frame_at_index(settings.frame_count)?
+    } else {
+        SourceImage::load(&input).map_err(|e| format!("could not read {}: {e}", input.display()))?
+    };
 
     let mut renderer = HeadlessRenderer::new()?;
     let info = renderer.adapter_info();

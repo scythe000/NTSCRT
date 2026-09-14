@@ -12,5 +12,6 @@ pub mod param_gates;
 pub mod presets;
 pub mod render;
 pub mod ui;
+pub mod video;
 
 pub use render::{HeadlessRenderer, RenderSettings};
