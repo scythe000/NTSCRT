@@ -70,14 +70,22 @@ zooms.
 
 **Presets** — save or load your entire configuration (downscale, NTSC, shader
 and every shader parameter) as JSON, with the 17 bundled presets listed
-underneath. The format is the macOS build's, so presets move between the two.
+underneath, with a tick against the loaded one that clears as soon as you
+change anything it controls. Loading a preset turns **Animate** on whatever
+the preset itself stores: these looks are built out of tape noise and
+tracking error, and frozen on one frame a preset shows you a still that
+happens to be noisy rather than the effect it is for. The format is the
+macOS build's, so presets move between the two.
 Eight of the bundled presets carry keyframes; this build has no timeline, so
 it says so on load and **preserves them untouched when you save** rather than
 quietly dropping someone's animation.
 
 **Sidebar** — the creative pipeline, top to bottom in signal order:
 
-- **Source** — the loaded file. Drag & drop onto the window works too.
+- **Source** — the loaded file, and **Rotate** (also the toolbar button, or
+  Ctrl+R). Rotation is applied before the effect, so a portrait clip turned
+  landscape is degraded and scanned as if it had been shot that way, with
+  scanlines still horizontal. Drag & drop onto the window works too.
 - **Downscale** — the retro horizontal resolution the CRT shader sees (SNES
   256px, VGA 320px, or any custom width — height always follows your source's
   aspect ratio) and the resampling method. Nearest keeps pixels crunchy,
@@ -96,7 +104,9 @@ quietly dropping someone's animation.
   GIF; a still exports a PNG, or video if you tick **Export as video (VHS
   motion)** — the signal stage animates on its own, so a still can make a
   clip without a timeline. GIF gets its own width and rate and estimates the
-  file size before writing it.
+  file size before writing it. Movie exports run on their own thread with a
+  progress bar in the panel and the status bar, and can be cancelled — a
+  cancelled export removes its partial file.
 
 **Video** — open a clip and a transport bar docks under the preview:
 play/pause (Space), a frame-accurate scrubber, and a render bar showing how
@@ -160,9 +170,6 @@ same for the bundled `presets/` JSON.
 - **No keyframe timeline.** Video plays, scrubs and exports, but the
   keyframe animation the macOS build offers is not here. Presets that carry
   keyframes load and are preserved on save; they just don't animate.
-- **Export blocks the window.** A movie export runs synchronously, so the UI
-  is unresponsive until it finishes. The macOS build shows live progress in
-  the toolbar.
 - **No HEIC.** The `image` crate covers PNG/JPEG/BMP/TIFF/WebP; HEIC has no
   pure-Rust decoder. The macOS build gets it free from ImageIO.
 - **Not frame-identical to the Mac build.** The macOS build pins librashader to

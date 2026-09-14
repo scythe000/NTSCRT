@@ -8,6 +8,8 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use eframe::egui;
 use ntscrt_core::{DownscaleMethod, DownscaleSpec, NtscStage, Rotation, ScanlineGrid};
@@ -82,6 +84,8 @@ pub struct NtscrtApp {
     /// Movie export settings. Ignored when the source is a still and
     /// `export_still_frames` is None — that case writes a PNG.
     pub export_job: crate::video::ExportJob,
+    /// A movie export running on its own thread, if any.
+    pub export_task: Option<ExportTask>,
     /// Name of the preset currently loaded, so the Preset menu can tick it.
     /// Cleared as soon as any setting it controls is edited — a tick that
     /// survives edits would claim the preset is still what you are seeing.
@@ -147,6 +151,7 @@ impl NtscrtApp {
             export_height: 960,
             snap_to_scanline_grid: false,
             export_job: crate::video::ExportJob::default(),
+            export_task: None,
             active_preset: None,
             export_still_frames: None,
             pipeline,
@@ -473,6 +478,13 @@ impl eframe::App for NtscrtApp {
             ctx.request_repaint();
         }
 
+        // An export publishes progress from its own thread, so the window
+        // has to keep repainting to show it moving.
+        self.poll_export();
+        if self.export_task.is_some() {
+            ctx.request_repaint();
+        }
+
         let render_state = frame.wgpu_render_state().cloned();
 
         crate::ui::top_bar(self, ui, render_state.as_ref());
@@ -638,42 +650,101 @@ impl NtscrtApp {
         self.video.is_some() || self.export_still_frames.is_some()
     }
 
-    /// Render the whole source and encode it.
+    /// Start rendering the whole source and encoding it, on its own thread.
     ///
-    /// Runs on its own headless device for the same reason `export_png`
-    /// does: a long export must not stall the UI's swapchain. It is still
-    /// synchronous, so the window is unresponsive while it runs — the macOS
-    /// build shows live progress in the toolbar, which this does not yet.
+    /// Export is minutes of work at 4K and every frame goes through the CPU
+    /// signal stage, so running it inline would freeze the window for the
+    /// duration. The thread gets its own headless device — the same reason
+    /// the still export has always had one — and reports back through
+    /// [`ExportTask`], which the UI polls once a frame.
     pub(crate) fn export_video(&mut self, dest: PathBuf) {
+        if self.export_task.is_some() {
+            self.error = Some("An export is already running".into());
+            return;
+        }
         let Some(source_path) = self.source_path.clone() else {
             self.error = Some("Nothing loaded to export".into());
             return;
         };
         let settings = self.render_settings();
-        let mut job = crate::video::ExportJob {
-            dest,
-            ..self.export_job
-        };
-        job.gif = self.export_job.gif;
-        // A still needs an explicit frame count; a clip brings its own.
+        let job = crate::video::ExportJob { dest: dest.clone(), ..self.export_job };
         let still = self
             .export_still_frames
             .filter(|_| self.video.is_none())
             .map(|n| (n, 24.0));
 
-        let result = crate::HeadlessRenderer::new().and_then(|mut r| {
-            crate::video::export(&mut r, &settings, &job, &source_path, still, &mut |_, _| {})
-        });
+        let shared = Arc::new(Mutex::new(ExportProgress::default()));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let worker_shared = Arc::clone(&shared);
+        let worker_cancel = Arc::clone(&cancel);
+
+        let handle = std::thread::Builder::new()
+            .name("ntscrt.export".into())
+            .spawn(move || {
+                let result = crate::HeadlessRenderer::new().and_then(|mut r| {
+                    crate::video::export(
+                        &mut r,
+                        &settings,
+                        &job,
+                        &source_path,
+                        still,
+                        &mut |done, total| {
+                            if let Ok(mut p) = worker_shared.lock() {
+                                p.done = done;
+                                p.total = total;
+                            }
+                            !worker_cancel.load(Ordering::Relaxed)
+                        },
+                    )
+                });
+                if let Ok(mut p) = worker_shared.lock() {
+                    p.finished = Some(result.map_err(|e| e.to_string()));
+                }
+            });
+
+        match handle {
+            Ok(handle) => {
+                self.status = Some(format!("Exporting {}...", dest.display()));
+                self.error = None;
+                self.export_task = Some(ExportTask { progress: shared, cancel, handle, dest });
+            }
+            Err(e) => self.error = Some(format!("Could not start export: {e}")),
+        }
+    }
+
+    /// Ask a running export to stop at the next frame.
+    pub(crate) fn cancel_export(&mut self) {
+        if let Some(task) = &self.export_task {
+            task.cancel.store(true, Ordering::Relaxed);
+            self.status = Some("Cancelling export...".into());
+        }
+    }
+
+    /// Fold a finished export back into the UI. Called once a frame.
+    fn poll_export(&mut self) {
+        let Some(task) = &self.export_task else { return };
+        let finished = task.progress.lock().ok().and_then(|p| p.finished.clone());
+        let Some(result) = finished else { return };
+
+        // The worker has already stored its result, so this joins at once.
+        let task = self.export_task.take().unwrap();
+        let _ = task.handle.join();
+
         match result {
             Ok(s) => {
                 self.status = Some(format!(
                     "Exported {} ({}x{}, {} frames, {:.1} MB)",
-                    job.dest.display(),
+                    task.dest.display(),
                     s.width,
                     s.height,
                     s.frames,
                     s.bytes as f64 / (1024.0 * 1024.0)
                 ));
+                self.error = None;
+            }
+            // Cancelling is something the user asked for, not a failure.
+            Err(e) if e.contains("cancelled") => {
+                self.status = Some("Export cancelled".into());
                 self.error = None;
             }
             Err(e) => self.error = Some(format!("Export failed: {e}")),
@@ -714,6 +785,47 @@ impl NtscrtApp {
             }
             Err(e) => self.error = Some(format!("Export failed: {e}")),
         }
+    }
+}
+
+/// What a running export publishes for the UI to read.
+#[derive(Default)]
+pub struct ExportProgress {
+    pub done: u32,
+    pub total: u32,
+    /// Set once, when the worker stops. `Err` carries the message as a
+    /// string because the error is not `Send`.
+    pub finished: Option<Result<crate::video::ExportSummary, String>>,
+}
+
+/// A movie export in flight.
+pub struct ExportTask {
+    pub progress: Arc<Mutex<ExportProgress>>,
+    cancel: Arc<AtomicBool>,
+    handle: std::thread::JoinHandle<()>,
+    dest: PathBuf,
+}
+
+impl ExportTask {
+    /// `(done, total)` as of the last completed frame.
+    pub fn counts(&self) -> (u32, u32) {
+        self.progress
+            .lock()
+            .map(|p| (p.done, p.total))
+            .unwrap_or((0, 0))
+    }
+
+    pub fn fraction(&self) -> f32 {
+        let (done, total) = self.counts();
+        if total == 0 {
+            0.0
+        } else {
+            done as f32 / total as f32
+        }
+    }
+
+    pub fn is_cancelling(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
     }
 }
 

@@ -336,6 +336,38 @@ fn export_panel(app: &mut NtscrtApp, ui: &mut egui::Ui) {
                 );
             }
 
+            // A running export owns this panel: the settings it is using
+            // must not look editable while it runs.
+            if let Some(task) = &app.export_task {
+                let (done, total) = task.counts();
+                let fraction = task.fraction();
+                let cancelling = task.is_cancelling();
+
+                ui.separator();
+                ui.add(
+                    egui::ProgressBar::new(fraction)
+                        .show_percentage()
+                        .animate(!cancelling),
+                );
+                ui.label(
+                    egui::RichText::new(if cancelling {
+                        "Cancelling\u{2026}".to_string()
+                    } else if total > 0 {
+                        format!("{done} / {total} frames")
+                    } else {
+                        "Starting\u{2026}".to_string()
+                    })
+                    .small()
+                    .weak(),
+                );
+                ui.add_enabled_ui(!cancelling, |ui| {
+                    if ui.button("Cancel").clicked() {
+                        app.cancel_export();
+                    }
+                });
+                return;
+            }
+
             movie_controls(app, ui);
 
             let label = if app.exports_video() {
@@ -500,6 +532,24 @@ fn movie_controls(app: &mut NtscrtApp, ui: &mut egui::Ui) {
 pub fn status_bar(app: &mut NtscrtApp, root: &mut egui::Ui) {
     egui::Panel::bottom("status").show(root, |ui| {
         ui.horizontal(|ui| {
+            // Progress is worth seeing even when the Export panel is shut.
+            if let Some(task) = &app.export_task {
+                let (done, total) = task.counts();
+                ui.add_sized(
+                    [140.0, 14.0],
+                    egui::ProgressBar::new(task.fraction()).show_percentage(),
+                );
+                ui.label(
+                    egui::RichText::new(if task.is_cancelling() {
+                        "cancelling".to_string()
+                    } else {
+                        format!("{done}/{total}")
+                    })
+                    .small()
+                    .weak(),
+                );
+                ui.separator();
+            }
             if let Some(err) = &app.error {
                 ui.colored_label(egui::Color32::from_rgb(230, 100, 100), err);
             } else if let Some(status) = &app.status {

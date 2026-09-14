@@ -58,6 +58,8 @@ VIDEO:
     --gif-width <px>      GIF width (default 480).
     --gif-fps <n>         GIF rate: 6, 12, 24 or 30 (default 12).
     --still-frames <n>    Export a still as video: <n> frames of VHS motion.
+    --cancel-after <n>    Cancel the export after <n> frames. For checking the
+                          cancel path leaves no partial file behind.
 ";
 
 fn main() -> ExitCode {
@@ -328,6 +330,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut export_dest: Option<PathBuf> = None;
     let mut job = ntscrt_app::video::ExportJob::default();
     let mut still_frames: Option<u32> = None;
+    let mut cancel_after: Option<u32> = None;
     let mut i = 0;
     while i < args.len() {
         let arg = &args[i];
@@ -350,6 +353,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "--gif-width" => job.gif.width = value("--gif-width")?.parse()?,
             "--gif-fps" => job.gif.fps = value("--gif-fps")?.parse()?,
             "--still-frames" => still_frames = Some(value("--still-frames")?.parse()?),
+            "--cancel-after" => cancel_after = Some(value("--cancel-after")?.parse()?),
             "--format" => {
                 let v = value("--format")?;
                 job.format = match v.to_ascii_lowercase().as_str() {
@@ -462,6 +466,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 if total > 0 && done * 10 / total > last {
                     last = done * 10 / total;
                     println!("  {}%  ({done}/{total} frames)", last * 10);
+                }
+                match cancel_after {
+                    Some(n) if done >= n => {
+                        println!("  cancelling after {done} frames");
+                        false
+                    }
+                    _ => true,
                 }
             },
         )?;

@@ -193,8 +193,13 @@ impl Default for ExportJob {
     }
 }
 
-/// Progress, so a caller can drive a bar. `(done, total)`.
-pub type Progress<'a> = &'a mut dyn FnMut(u32, u32);
+/// Progress, so a caller can drive a bar: called with `(done, total)` after
+/// every frame.
+///
+/// Returning `false` cancels — the encoder is torn down and the partial file
+/// removed. An export is minutes of work at 4K, so it has to be abandonable
+/// without killing the app.
+pub type Progress<'a> = &'a mut dyn FnMut(u32, u32) -> bool;
 
 /// Render `source` through the pipeline and encode it.
 ///
@@ -267,6 +272,7 @@ pub fn export(
         .ok_or("could not open a pipe to ffmpeg")?;
 
     let mut written = 0u32;
+    let mut cancelled = false;
     let mut reader = video.as_ref().map(|v| v.sequential_reader(0)).transpose()?;
     let still = if video.is_none() {
         Some(crate::image_io::SourceImage::load(source)?)
@@ -322,11 +328,23 @@ pub fn export(
             }
 
             written += 1;
-            progress(written, total);
+            if !progress(written, total) {
+                cancelled = true;
+                break 'outer;
+            }
         }
     }
 
     drop(stdin);
+
+    if cancelled {
+        // Closing the pipe makes ffmpeg finalise what it has; the partial
+        // file is worse than nothing, so it goes.
+        let _ = proc.child.wait();
+        let _ = std::fs::remove_file(&job.dest);
+        return Err(ExportError::Cancelled.into());
+    }
+
     let status = proc.child.wait()?;
     if !status.success() {
         return Err(format!("ffmpeg failed: {}", proc.diagnostics()).into());
@@ -341,6 +359,24 @@ pub fn export(
         bytes,
     })
 }
+
+/// Cancellation is not a failure, but it has to travel as one so the whole
+/// call unwinds. Callers match on it to stay quiet rather than reporting an
+/// error the user caused deliberately.
+#[derive(Debug)]
+pub enum ExportError {
+    Cancelled,
+}
+
+impl std::fmt::Display for ExportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExportError::Cancelled => write!(f, "export cancelled"),
+        }
+    }
+}
+
+impl std::error::Error for ExportError {}
 
 #[derive(Debug, Clone, Copy)]
 pub struct ExportSummary {
