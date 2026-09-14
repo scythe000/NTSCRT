@@ -23,6 +23,7 @@ ntscrt-core = { path = "../ntscrt-core" }
 wgpu.workspace = true
 eframe.workspace = true
 egui.workspace = true
+egui-wgpu = "0.36"
 
 # runtime-wgpu gives one shader backend over D3D12/Vulkan, so the chain runs
 # on the same device egui already owns.

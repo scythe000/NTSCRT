@@ -18,6 +18,8 @@ Grab the DMG from [**Releases**](../../releases/latest), open it, and drag **NTS
 
 > **Intel note:** I build and test NTSCRT on Apple Silicon and haven't personally tested the Intel build. Intel support exists thanks to a contributed fix ([#1](../../pull/1)) verified by its author on an Intel iMac Pro — if something misbehaves on your Intel Mac, please open an issue.
 
+> **Windows:** a native Windows build lives in [`windows/`](windows/README.md) — same ntsc-rs + CRT shader pipeline, rebuilt on wgpu and egui because SwiftUI and Metal don't exist there. Stills only for now; build it with `cargo build --release`.
+
 ## Using the app
 
 **Toolbar** — file actions live in the window toolbar: **Open** (⌘O) an image (PNG/JPEG/HEIC) or video (MP4/MOV), save/load a **Preset** (your entire configuration as a JSON file — downscale, VHS, shader, view, and the whole timeline: duration, frame rate and every keyframe), or pick one of the bundled presets listed underneath — loading one that carries keyframes opens the timeline so you can see the animation it brought with it, and **Export** (⌘E): stills to PNG; videos to H.264/HEVC .mp4, ProRes .mov (with audio), or animated **GIF**, at your choice of resolution and quality. Scanline detail is brutal on lossy codecs — use the High/Very high quality tiers, or ProRes when it's headed into an edit. Exports are deterministic: same settings + same frame = same pixels.

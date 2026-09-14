@@ -4,9 +4,12 @@
 //! the headless verifier (`ntscrt-smoke`, the counterpart of the macOS
 //! `crt-smoke` target) drive exactly the same code.
 
+pub mod app;
 pub mod gpu;
 pub mod image_io;
+pub mod param_gates;
 pub mod presets;
 pub mod render;
+pub mod ui;
 
 pub use render::{HeadlessRenderer, RenderSettings};

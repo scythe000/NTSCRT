@@ -1,0 +1,145 @@
+# NTSCRT for Windows
+
+A native Windows build of [NTSCRT](../README.md): [ntsc-rs](https://github.com/ntsc-rs/ntsc-rs)
+analog signal emulation followed by RetroArch's CRT shaders through
+[librashader](https://github.com/SnowflakePowered/librashader), same pipeline
+as the macOS app —
+
+```
+your image → NTSC/VHS signal degradation (full res) → downscale to retro resolution → CRT shader → screen
+```
+
+## Why this is a rewrite, not a port
+
+The two projects doing the actual image work are already cross-platform Rust,
+so they carry over directly. The app around them does not: the macOS build is
+~9,000 lines of Swift against SwiftUI, AppKit, Metal, AVFoundation, CoreImage
+and ImageIO, none of which exist on Windows. Swift has a Windows toolchain,
+but that gets you the language, not the frameworks.
+
+So the libraries are reused as-is and the shell is rebuilt on **wgpu** (D3D12
+or Vulkan) and **egui**. In one respect this is simpler than the original: the
+macOS build reaches both libraries through an Objective-C bridge over a C ABI
+(`Sources/CrtAppBridge`, `Vendor/ntscrs-capi`) because its host language is
+Swift. Here the host is Rust, so both are ordinary crate dependencies — no
+bridge, no dylib to ship, no header to keep in sync.
+
+What was ported rather than rewritten: the scanline-grid math
+(`ScanlineGrid.swift`), the downscale kernels (the MSL in `Downscaler.swift`,
+transliterated to WGSL with the same weight functions and ratio-scaled
+support), and the shader parameter gating rules (`ParamGates.swift`) — those
+last are facts about the shaders, not about the platform.
+
+## Requirements
+
+- Windows 10 1809 or later (the D3D12 backend needs render passes), x64
+- A GPU with D3D12 or Vulkan drivers
+
+Building additionally needs:
+
+- [Rust](https://rustup.rs/) (stable, `x86_64-pc-windows-msvc`)
+- Visual Studio Build Tools with the C++ workload — MSVC provides the linker
+
+## Build
+
+```powershell
+# From the repository root. Both submodules are required: ntsc-rs is the
+# signal stage, slang-shaders holds the CRT presets themselves.
+git submodule update --init --depth 1 Vendor/ntsc-rs Vendor/slang-shaders
+
+cd windows
+cargo build --release
+```
+
+Two binaries land in `windows/target/release/`:
+
+- `ntscrt.exe` — the app
+- `ntscrt-smoke.exe` — headless verifier, the counterpart of the macOS `crt-smoke`
+
+Use `--release`. The NTSC stage is CPU-bound and unusably slow unoptimised;
+dependencies are optimised even in debug builds for the same reason.
+
+## Using the app
+
+**Toolbar** — **Open** (Ctrl+O) an image, **Export PNG** (Ctrl+E), and the view
+controls. **Animate** runs the preview continuously so tape noise, jitter and
+interlacing actually move — leave it on for the real experience. **Compare**
+splits the preview: full pipeline left of the line, untouched source right;
+drag the line to move the split. Alt+scroll zooms.
+
+**Sidebar** — the creative pipeline, top to bottom in signal order:
+
+- **Source** — the loaded file. Drag & drop onto the window works too.
+- **Downscale** — the retro horizontal resolution the CRT shader sees (SNES
+  256px, VGA 320px, or any custom width — height always follows your source's
+  aspect ratio) and the resampling method. Nearest keeps pixels crunchy,
+  Nearest+ keeps the punch without shimmering, Area is the smooth neutral choice.
+- **NTSC (TV)** — the analog signal stage: composite noise, chroma bleed, head
+  switching, tracking noise, tape speed, edge wave, and about sixty more. These
+  controls are generated from ntsc-rs's own settings schema, so they track the
+  library. Preset JSON is interchangeable with the
+  [ntsc-rs desktop app](https://github.com/ntsc-rs/ntsc-rs/releases) — the 17
+  presets in `presets/` load here.
+- **CRT** — the seven bundled RetroArch presets with their runtime parameters.
+  Grayed-out controls tell you which switch activates them; many CRT parameters
+  only apply when their feature (curvature, mask, geometry mode) is on.
+- **Export** — output height, with a scanline-grid warning when the result
+  would band.
+
+**Scanline banding.** CRT shaders draw scanlines in *output* pixels, so if the
+export height isn't a whole multiple of the downscale height, one source line
+covers a fractional number of rows and the scanlines group into visible bands.
+Exports handle this automatically by rendering at a whole multiple and
+averaging down. **Snap size to scanline grid** takes the other route: it rounds
+the output to the nearest size where every source line gets the same whole
+number of rows, keeping scanlines crispest but changing your dimensions. As a
+rule of thumb, crisp scanlines want 3+ output rows per downscale line.
+
+## Headless verifier
+
+```powershell
+# Render an image through the full pipeline
+.\target\release\ntscrt-smoke.exe input.png out.png --shader royale --downscale 320 --height 960
+
+# Check which shaders resolve on this machine
+.\target\release\ntscrt-smoke.exe --list-shaders
+```
+
+`--shader`, `--downscale <px|off>`, `--method`, `--height`, `--snap`,
+`--no-ntsc`, `--ntsc-preset <file>`, `--frame <n>`. Useful for confirming a
+build renders correctly on a given adapter and for byte-comparing output
+across revisions.
+
+## Asset locations
+
+The app looks for the shader tree beside the executable (`shaders/`) and then
+walks up to find `Vendor/slang-shaders`, so it works from both an install and
+a source checkout. Override with `NTSCRT_SHADERS`; `NTSCRT_PRESETS` does the
+same for the bundled `presets/` JSON.
+
+## Differences from the macOS build
+
+- **No video yet.** Stills only: load an image, export a PNG. Video playback,
+  the keyframe timeline, and MP4/ProRes/GIF export are not built. The pipeline
+  and the export path are already frame-indexed and deterministic, so video is
+  additive rather than a redesign.
+- **No HEIC.** The `image` crate covers PNG/JPEG/BMP/TIFF/WebP; HEIC has no
+  pure-Rust decoder. The macOS build gets it free from ImageIO.
+- **Not frame-identical to the Mac build.** The macOS build pins librashader to
+  76462c03 because later versions shifted crt-royale's output; that pin is
+  Metal-specific. This uses librashader 0.12 on its wgpu runtime, so
+  cross-backend bit-parity is not a goal Windows can meet. Output is still
+  deterministic *here*: same settings and frame index give the same pixels.
+- **No undo** — same as the original. Save presets before big experiments.
+
+## Verified
+
+On an RTX 3090 (Vulkan backend):
+
+- All seven bundled CRT presets render.
+- All six downscale kernels produce distinct, correct output.
+- crt-royale, 320×240 → 1280×960, in 1.9s.
+- 40 tests pass (`cargo test --release`).
+
+The GUI launches and runs clean; its visual layout has not been checked against
+the macOS app side by side.

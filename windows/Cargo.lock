@@ -2322,6 +2322,7 @@ dependencies = [
  "bytemuck",
  "eframe",
  "egui",
+ "egui-wgpu",
  "env_logger",
  "image",
  "librashader",
