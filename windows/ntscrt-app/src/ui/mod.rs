@@ -9,6 +9,7 @@ mod downscale_panel;
 mod ntsc_panel;
 mod preview_panel;
 mod shader_panel;
+mod transport_bar;
 
 use eframe::egui;
 
@@ -297,4 +298,10 @@ pub fn status_bar(app: &mut NtscrtApp, root: &mut egui::Ui) {
 
 pub fn preview(app: &mut NtscrtApp, root: &mut egui::Ui, rs: Option<&RenderState>) {
     preview_panel::show(app, root, rs);
+}
+
+/// Video transport, docked between the status bar and the preview. Draws
+/// nothing when the source is a still.
+pub fn transport_bar(app: &mut NtscrtApp, root: &mut egui::Ui) {
+    transport_bar::show(app, root);
 }

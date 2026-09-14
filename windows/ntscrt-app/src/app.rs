@@ -395,6 +395,7 @@ impl eframe::App for NtscrtApp {
         crate::ui::top_bar(self, ui, render_state.as_ref());
         crate::ui::sidebar(self, ui, render_state.as_ref());
         crate::ui::status_bar(self, ui);
+        crate::ui::transport_bar(self, ui);
         crate::ui::preview(self, ui, render_state.as_ref());
 
         if let Some(rs) = render_state.as_ref() {
