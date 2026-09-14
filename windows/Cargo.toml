@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = ["ntscrt-core", "ntscrt-app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR ISC OR Apache-2.0"
+
+[workspace.dependencies]
+# eframe 0.36 and librashader 0.12 both build on wgpu 30, so egui's renderer
+# and the shader chain share one device/queue with no version bridging.
+wgpu = "30.0"
+eframe = { version = "0.36.2", default-features = false, features = ["wgpu", "default_fonts"] }
+egui = "0.36"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+
+# The NTSC stage is CPU-bound and unusably slow in an unoptimised build, so
+# optimise dependencies even in debug (the same reason the macOS README tells
+# you to use `swift build -c release`).
+[profile.dev.package."*"]
+opt-level = 3

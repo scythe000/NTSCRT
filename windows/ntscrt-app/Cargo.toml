@@ -1,0 +1,44 @@
+[package]
+name = "ntscrt-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "NTSCRT for Windows: ntsc-rs signal emulation + RetroArch CRT shaders, on wgpu/egui"
+
+[lib]
+name = "ntscrt_app"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ntscrt"
+path = "src/main.rs"
+
+[[bin]]
+name = "ntscrt-smoke"
+path = "src/bin/smoke.rs"
+
+[dependencies]
+ntscrt-core = { path = "../ntscrt-core" }
+
+wgpu.workspace = true
+eframe.workspace = true
+egui.workspace = true
+
+# runtime-wgpu gives one shader backend over D3D12/Vulkan, so the chain runs
+# on the same device egui already owns.
+librashader = { version = "0.12", default-features = false, features = ["runtime-wgpu", "presets", "stable"] }
+# ShaderFeatures is not re-exported through the librashader facade in 0.12.
+librashader-common = "0.12"
+
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "tiff", "webp"] }
+rfd = "0.15"
+pollster = "0.4"
+bytemuck = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+env_logger = "0.11"
+
+[build-dependencies]
+# Embeds the app icon and marks the binary DPI-aware / per-monitor v2.
+winresource = "0.1"
