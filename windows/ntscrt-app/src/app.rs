@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use eframe::egui;
-use ntscrt_core::{DownscaleMethod, DownscaleSpec, NtscStage, ScanlineGrid};
+use ntscrt_core::{DownscaleMethod, DownscaleSpec, NtscStage, Rotation, ScanlineGrid};
 
 use crate::app_video::VideoState;
 use crate::gpu::{chain::ShaderParamMeta, Pipeline, RenderRequest, ShaderChain, WORK_FORMAT};
@@ -31,6 +31,15 @@ pub struct NtscrtApp {
     // ---- source ----
     pub source: SourceImage,
     pub source_path: Option<PathBuf>,
+    /// Applied to the source before anything else. See `ntscrt_core::rotation`
+    /// for why it has to come first.
+    pub rotation: Rotation,
+    /// The loaded still as it came off disk, before rotation. None while a
+    /// video is loaded — there the frames arrive rotated from the producer.
+    ///
+    /// `source` is always pipeline-ready: rotation has already been applied,
+    /// so nothing downstream has to know rotation exists.
+    pub(crate) original_source: Option<crate::image_io::SourceImage>,
     /// Bumped whenever the source pixels change, so the NTSC stage knows to
     /// re-read them instead of reusing its cached clean copy.
     pub source_version: i64,
@@ -73,6 +82,10 @@ pub struct NtscrtApp {
     /// Movie export settings. Ignored when the source is a still and
     /// `export_still_frames` is None — that case writes a PNG.
     pub export_job: crate::video::ExportJob,
+    /// Name of the preset currently loaded, so the Preset menu can tick it.
+    /// Cleared as soon as any setting it controls is edited — a tick that
+    /// survives edits would claim the preset is still what you are seeing.
+    pub active_preset: Option<String>,
     /// Frames of VHS motion to write when exporting a *still* as video.
     /// None keeps the still export a PNG, as it has always been.
     pub export_still_frames: Option<u32>,
@@ -112,6 +125,8 @@ impl NtscrtApp {
         let mut app = Self {
             source: SourceImage::solid(320, 240, [16, 16, 24, 255]),
             source_path: None,
+            rotation: Rotation::None,
+            original_source: None,
             source_version: 0,
             downscale_enabled: true,
             downscale_width: 320,
@@ -132,6 +147,7 @@ impl NtscrtApp {
             export_height: 960,
             snap_to_scanline_grid: false,
             export_job: crate::video::ExportJob::default(),
+            active_preset: None,
             export_still_frames: None,
             pipeline,
             preview_texture: None,
@@ -149,22 +165,80 @@ impl NtscrtApp {
     /// Downscale spec for the current source, or None when the stage is off.
     pub fn downscale_spec(&self) -> Option<DownscaleSpec> {
         self.downscale_enabled.then(|| {
-            DownscaleSpec::for_width(
-                self.downscale_width,
-                self.source.width,
-                self.source.height,
-                self.downscale_method,
-            )
+            let (sw, sh) = self.source_size();
+            DownscaleSpec::for_width(self.downscale_width, sw, sh, self.downscale_method)
         })
+    }
+
+    /// Size of what the pipeline consumes, i.e. after rotation. The
+    /// downscale's derived height, the output aspect and the scanline grid
+    /// all key off this rather than the file's own dimensions.
+    pub fn source_size(&self) -> (u32, u32) {
+        (self.source.width, self.source.height)
+    }
+
+    /// Rebuild `source` from the unrotated original. Stills only — video
+    /// frames arrive already rotated.
+    fn rebuild_rotation(&mut self) {
+        let Some(original) = self.original_source.as_ref() else { return };
+        if self.rotation == Rotation::None {
+            self.source = original.clone();
+            return;
+        }
+        let (pixels, width, height) = ntscrt_core::rotate_rgba(
+            &original.pixels,
+            original.width,
+            original.height,
+            self.rotation,
+        );
+        self.source = crate::image_io::SourceImage { width, height, pixels };
+    }
+
+    /// Rotate a freshly decoded video frame, which arrives unrotated from a
+    /// seek or the first-frame fetch.
+    pub(crate) fn rotate_decoded(
+        &self,
+        img: crate::image_io::SourceImage,
+    ) -> crate::image_io::SourceImage {
+        if self.rotation == Rotation::None {
+            return img;
+        }
+        let (pixels, width, height) =
+            ntscrt_core::rotate_rgba(&img.pixels, img.width, img.height, self.rotation);
+        crate::image_io::SourceImage { width, height, pixels }
+    }
+
+    /// Turn the source a quarter turn clockwise.
+    pub fn rotate_cw(&mut self) {
+        self.set_rotation(self.rotation.next_cw());
+    }
+
+    pub fn set_rotation(&mut self, rotation: Rotation) {
+        if self.rotation == rotation {
+            return;
+        }
+        self.rotation = rotation;
+        self.rebuild_rotation();
+        // A video's current frame is still the old orientation; re-fetch it
+        // so the preview turns immediately rather than at the next frame.
+        self.refresh_rotated_video_frame();
+        // The source pixels the NTSC stage sees have changed shape, so its
+        // cached clean copy and every cached frame are stale.
+        self.source_version += 1;
+        self.ntsc.invalidate();
+        self.mark_chain_input_edited();
     }
 
     /// What the shader actually sees — the gate rules need this.
     pub fn chain_input_size(&self) -> (u32, u32) {
-        ScanlineGrid::chain_input_size(
-            self.source.width,
-            self.source.height,
-            self.downscale_spec().as_ref(),
-        )
+        let (sw, sh) = self.source_size();
+        ScanlineGrid::chain_input_size(sw, sh, self.downscale_spec().as_ref())
+    }
+
+    /// A setting the loaded preset controls has changed, so the menu tick
+    /// no longer describes what is on screen.
+    pub fn leave_preset(&mut self) {
+        self.active_preset = None;
     }
 
     pub fn mark_dirty(&mut self) {
@@ -186,7 +260,8 @@ impl NtscrtApp {
                     img.width,
                     img.height
                 ));
-                self.source = img;
+                self.original_source = Some(img);
+                self.rebuild_rotation();
                 self.source_path = Some(path);
                 self.source_version += 1;
                 self.ntsc.invalidate();
@@ -473,6 +548,7 @@ impl NtscrtApp {
                 compare: self.compare,
                 integer_scale: true,
             },
+            rotation: self.rotation,
             timeline: self.loaded_timeline.clone(),
         }
     }
@@ -533,8 +609,15 @@ impl NtscrtApp {
             notes.push(format!("unknown shader '{}'", preset.shader.preset));
         }
 
-        self.animate = preset.view.animate;
+        // Every preset animates on load, whatever its own `view.animate`
+        // says. These looks are built out of tape noise, jitter and
+        // tracking error — frozen on one frame a preset shows you a still
+        // that happens to be noisy, not the effect it is actually for. Four
+        // of the bundled presets store `animate: false`; the flag is still
+        // round-tripped on save, it just doesn't decide what you see.
+        self.animate = true;
         self.compare = preset.view.compare;
+        self.set_rotation(preset.rotation);
 
         if preset.has_keyframes() {
             notes.push(
@@ -605,6 +688,7 @@ impl NtscrtApp {
             downscale_width: self.downscale_enabled.then_some(self.downscale_width),
             downscale_method: self.downscale_method,
             ntsc_enabled: self.ntsc_enabled,
+            rotation: self.rotation,
             ntsc_preset_json: self.ntsc.settings_json().ok(),
             shader_id: self.shader_id.clone(),
             shader_params: self.shader_params.iter().map(|(k, v)| (k.clone(), *v)).collect(),
@@ -619,6 +703,9 @@ impl NtscrtApp {
         // A separate headless device keeps the export off the presenting
         // device, so a long render cannot stall the UI's swapchain.
         match crate::HeadlessRenderer::new()
+                        // The original, not `effective_source()`: `settings.rotation`
+            // makes the renderer do the turn, and doing both would rotate
+            // twice.
             .and_then(|mut r| r.render_to_png(&self.source, &settings, &dest))
         {
             Ok((w, h)) => {

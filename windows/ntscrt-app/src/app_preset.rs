@@ -30,6 +30,11 @@ pub struct AppPreset {
     pub shader: ShaderSection,
     #[serde(default)]
     pub view: ViewSection,
+    /// Source rotation in degrees. A Windows addition, so it defaults to 0
+    /// for the macOS presets and for anything written by that build; Swift's
+    /// decoder ignores keys it doesn't know, so presets still move both ways.
+    #[serde(default)]
+    pub rotation: ntscrt_core::Rotation,
     /// Opaque: read back out exactly as it came in. See the module note.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeline: Option<serde_json::Value>,
@@ -154,6 +159,7 @@ mod tests {
                 params: [("CURVATURE".to_string(), 1.0)].into_iter().collect(),
             },
             view: ViewSection::default(),
+            rotation: ntscrt_core::Rotation::None,
             timeline: Some(serde_json::json!({
                 "duration": 2, "enabled": false, "fps": 30,
                 "keys": [{ "t": 0.0 }]

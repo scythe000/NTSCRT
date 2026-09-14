@@ -39,6 +39,7 @@ OPTIONS:
     --method <name>       nearest | nearest+ | bilinear | bicubic | lanczos | area
     --height <px>         Output height (default: 960).
     --snap                Snap output onto the scanline grid instead of supersampling.
+    --rotate <deg>        Rotate the source before the pipeline: 0, 90, 180, 270.
     --no-ntsc             Skip the NTSC/VHS signal stage.
     --ntsc-preset <file>  ntsc-rs preset JSON (interchangeable with the ntsc-rs app).
     --frame <n>           Frame index: the deterministic RNG's seed, and which
@@ -124,6 +125,7 @@ fn run_playback(
         settings.ntsc_enabled,
         settings.ntsc_preset_json.clone(),
         GENERATION,
+        settings.rotation,
     );
     config.set_cache_probe(Some(cache.probe()));
     let pipeline = PlaybackPipeline::start(
@@ -338,6 +340,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "--height" => settings.output_height = value("--height")?.parse()?,
             "--frame" => settings.frame_count = value("--frame")?.parse()?,
             "--snap" => settings.snap_to_scanline_grid = true,
+            "--rotate" => {
+                let deg: i32 = value("--rotate")?.parse()?;
+                settings.rotation = ntscrt_core::Rotation::try_from(deg)?;
+            }
             "--playback" => playback_frames = Some(value("--playback")?.parse()?),
             "--export" => export_dest = Some(PathBuf::from(value("--export")?)),
             "--loop" => job.loop_count = value("--loop")?.parse()?,

@@ -31,6 +31,21 @@ pub fn top_bar(app: &mut NtscrtApp, root: &mut egui::Ui, rs: Option<&RenderState
             preset_menu(app, ui, rs);
             ui.separator();
 
+            if ui
+                .add_sized([26.0, 22.0], egui::Button::new("\u{27F3}"))
+                .on_hover_text(
+                    "Rotate 90\u{00B0} right (Ctrl+R). Applied before the effect, so \
+                     scanlines stay horizontal.",
+                )
+                .clicked()
+            {
+                app.rotate_cw();
+            }
+            if app.rotation != ntscrt_core::Rotation::None {
+                ui.label(egui::RichText::new(app.rotation.display_name()).small().weak());
+            }
+            ui.separator();
+
             ui.checkbox(&mut app.animate, "Animate")
                 .on_hover_text("Run the preview continuously so tape noise, jitter and \
                                 interlacing actually move.");
@@ -61,6 +76,9 @@ pub fn top_bar(app: &mut NtscrtApp, root: &mut egui::Ui, rs: Option<&RenderState
 
     // Keyboard shortcuts, matching the macOS Command-key equivalents. Space
     // is play/pause, as it is in every player.
+    if ctx.input(|i: &egui::InputState| i.modifiers.ctrl && i.key_pressed(egui::Key::R)) {
+        app.rotate_cw();
+    }
     let (open, export, play) = ctx.input(|i: &egui::InputState| {
         (
             i.modifiers.ctrl && i.key_pressed(egui::Key::O),
@@ -116,7 +134,16 @@ fn preset_menu(app: &mut NtscrtApp, ui: &mut egui::Ui, rs: Option<&RenderState>)
         if !bundled.is_empty() {
             ui.separator();
             for (name, path) in bundled {
-                if ui.button(&name).clicked() {
+                // A tick marks the loaded preset. It clears the moment any
+                // setting the preset controls is edited, so it never claims
+                // a look you have since changed.
+                let active = app.active_preset.as_deref() == Some(name.as_str());
+                let label = if active {
+                    format!("\u{2713} {name}")
+                } else {
+                    format!("   {name}")
+                };
+                if ui.button(label).clicked() {
                     ui.close();
                     load_preset(app, &path, rs);
                 }
@@ -132,7 +159,12 @@ fn load_preset(app: &mut NtscrtApp, path: &std::path::Path, rs: Option<&RenderSt
     };
     let name = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
     match crate::app_preset::AppPreset::load(path) {
-        Ok(preset) => match app.apply_preset(preset, &rs.device, &rs.queue) {
+        Ok(preset) => {
+            let note = app.apply_preset(preset, &rs.device, &rs.queue);
+            // Set after applying: apply_preset routes through the same edit
+            // hooks the panels use, which clear the tick.
+            app.active_preset = Some(name.clone());
+            match note {
             // Anything the preset asked for that couldn't be applied is
             // surfaced rather than silently dropped.
             Some(note) => {
@@ -143,7 +175,8 @@ fn load_preset(app: &mut NtscrtApp, path: &std::path::Path, rs: Option<&RenderSt
                 app.status = Some(format!("Loaded preset '{name}'"));
                 app.error = None;
             }
-        },
+            }
+        }
         Err(e) => app.error = Some(format!("Could not load '{name}': {e}")),
     }
 }
@@ -236,7 +269,22 @@ fn source_panel(app: &mut NtscrtApp, ui: &mut egui::Ui) {
                     .monospace()
                     .weak(),
             );
-            if ui.button("Open image\u{2026}").clicked() {
+            ui.horizontal(|ui| {
+                ui.label("Rotate");
+                let mut chosen = app.rotation;
+                egui::ComboBox::from_id_salt("rotation")
+                    .selected_text(app.rotation.display_name())
+                    .show_ui(ui, |ui| {
+                        for r in ntscrt_core::Rotation::ALL {
+                            if ui.selectable_label(app.rotation == r, r.display_name()).clicked() {
+                                chosen = r;
+                            }
+                        }
+                    });
+                app.set_rotation(chosen);
+            });
+
+            if ui.button("Open\u{2026}").clicked() {
                 pick_source(app);
             }
             ui.label(

@@ -31,7 +31,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 
-use ntscrt_core::{NtscStage, PixelFormat};
+use ntscrt_core::{NtscStage, PixelFormat, Rotation};
 
 use super::cache::CacheProbe;
 use super::source::VideoSource;
@@ -63,20 +63,41 @@ struct ConfigInner {
     enabled: bool,
     settings_json: Option<String>,
     generation: u64,
+    /// Applied to each frame before the signal stage, so a rotated clip is
+    /// degraded and scanned as if it had been shot that way.
+    rotation: Rotation,
     /// Frame-cache probe: a frame already held is decoded but not processed.
     probe: Option<CacheProbe>,
 }
 
 impl Config {
-    pub fn new(enabled: bool, settings_json: Option<String>, generation: u64) -> Arc<Self> {
+    pub fn new(
+        enabled: bool,
+        settings_json: Option<String>,
+        generation: u64,
+        rotation: Rotation,
+    ) -> Arc<Self> {
         Arc::new(Self {
-            inner: Mutex::new(ConfigInner { enabled, settings_json, generation, probe: None }),
+            inner: Mutex::new(ConfigInner {
+                enabled,
+                settings_json,
+                generation,
+                rotation,
+                probe: None,
+            }),
         })
     }
 
-    pub fn update(&self, enabled: bool, settings_json: Option<String>, generation: u64) {
+    pub fn update(
+        &self,
+        enabled: bool,
+        settings_json: Option<String>,
+        generation: u64,
+        rotation: Rotation,
+    ) {
         if let Ok(mut inner) = self.inner.lock() {
             inner.enabled = enabled;
+            inner.rotation = rotation;
             inner.settings_json = settings_json;
             inner.generation = generation;
         }
@@ -88,17 +109,18 @@ impl Config {
         }
     }
 
-    fn snapshot(&self) -> (bool, Option<String>, u64, Option<CacheProbe>) {
+    fn snapshot(&self) -> (bool, Option<String>, u64, Rotation, Option<CacheProbe>) {
         match self.inner.lock() {
             Ok(inner) => (
                 inner.enabled,
                 inner.settings_json.clone(),
                 inner.generation,
+                inner.rotation,
                 inner.probe.clone(),
             ),
             // A poisoned config means a producer panicked mid-frame; playing
             // on with the signal stage off beats taking the app down.
-            Err(_) => (false, None, 0, None),
+            Err(_) => (false, None, 0, Rotation::None, None),
         }
     }
 }
@@ -334,6 +356,8 @@ impl Drop for PlaybackPipeline {
 /// What a decoded frame is waiting to have done to it.
 struct Pending {
     clean: Vec<u8>,
+    /// Size of `clean`, which is the rotated size — not the clip's.
+    size: (u32, u32),
     frame_index: usize,
     absolute: usize,
     generation: u64,
@@ -381,10 +405,19 @@ fn run(
             // NTSC cost, so catch-up runs at decode speed.
             let hopeless = target_absolute.load(Ordering::Relaxed) > absolute;
             if !hopeless {
-                let (enabled, json, generation, probe) = config.snapshot();
+                let (enabled, json, generation, rotation, probe) = config.snapshot();
                 let cached = probe.is_some_and(|p| p.is_cached(frame_index, generation));
+                // Rotate before anything else touches the frame: NTSC is a
+                // scanline effect, so rotating afterwards would carry the
+                // scanlines round with the picture.
+                let (clean, pw, ph) = if rotation == Rotation::None {
+                    (pixels.to_vec(), width, height)
+                } else {
+                    ntscrt_core::rotate_rgba(pixels, width, height, rotation)
+                };
                 batch.push(Pending {
-                    clean: pixels.to_vec(),
+                    clean,
+                    size: (pw, ph),
                     frame_index,
                     absolute,
                     generation,
@@ -430,12 +463,13 @@ fn run(
                             applied.clone_from(&pending.settings_json);
                         }
                         let mut buffer = pending.clean.clone();
+                        let (pw, ph) = pending.size;
                         let processed = filter.process(
                             &mut buffer,
                             PixelFormat::Rgba8,
-                            width,
-                            height,
-                            width * 4,
+                            pw,
+                            ph,
+                            pw * 4,
                             pending.frame_index as i64,
                             // Every frame is new pixels, so there is no clean
                             // copy worth reusing between them.
@@ -455,9 +489,10 @@ fn run(
         // Emit in order.
         for (pending, processed) in batch.into_iter().zip(processed) {
             let output = Output {
+                // The rotated size, since `clean` is the rotated frame.
+                size: pending.size,
                 clean: pending.clean,
                 processed,
-                size: (width, height),
                 frame_index: pending.frame_index,
                 absolute_index: pending.absolute,
                 generation: pending.generation,

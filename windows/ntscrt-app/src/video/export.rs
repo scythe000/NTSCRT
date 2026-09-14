@@ -215,12 +215,13 @@ pub fn export(
     let (video, source_size, frame_count, fps) = match still_frames {
         Some((frames, fps)) => {
             let img = crate::image_io::SourceImage::load(source)?;
-            let size = (img.width, img.height);
+            let size = settings.rotation.output_size(img.width, img.height);
             (None, size, frames, fps)
         }
         None => {
             let v = VideoSource::open(source)?;
-            let size = v.size();
+            let (rw, rh) = v.size();
+            let size = settings.rotation.output_size(rw, rh);
             let n = v.info.total_frames as u32;
             let fps = v.info.frame_rate;
             (Some(v), size, n, fps)
@@ -229,6 +230,12 @@ pub fn export(
     if frame_count == 0 {
         return Err("source has no frames".into());
     }
+    // The decoder hands over unrotated frames; `source_size` is post-rotation.
+    let unrotated_size = if settings.rotation.swaps_axes() {
+        (source_size.1, source_size.0)
+    } else {
+        source_size
+    };
 
     let mut sequence = renderer.begin_sequence(settings, source_size)?;
     let (out_w, out_h) = sequence.output_size;
@@ -274,7 +281,7 @@ pub fn export(
             reader = Some(v.sequential_reader(0)?);
         }
         for _ in 0..frame_count {
-            let pixels: Vec<u8> = match (&mut reader, &still) {
+            let decoded: Vec<u8> = match (&mut reader, &still) {
                 (Some(r), _) => match r.next_image() {
                     Some(img) => img.pixels,
                     // The container's frame count can overcount; stopping
@@ -283,6 +290,13 @@ pub fn export(
                 },
                 (None, Some(img)) => img.pixels.clone(),
                 _ => return Err("no frame source".into()),
+            };
+            // Rotate before the pipeline, as everywhere else.
+            let pixels = if settings.rotation == ntscrt_core::Rotation::None {
+                decoded
+            } else {
+                let (w, h) = unrotated_size;
+                ntscrt_core::rotate_rgba(&decoded, w, h, settings.rotation).0
             };
 
             // `written` rather than `index` seeds the signal stage, so a

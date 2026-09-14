@@ -11,10 +11,12 @@
 
 pub mod downscale;
 pub mod ntsc;
+pub mod rotation;
 pub mod scanline;
 pub mod settings_ui;
 
 pub use downscale::{DownscaleMethod, DownscaleSpec};
 pub use ntsc::{NtscStage, PixelFormat};
+pub use rotation::{rotate_rgba, rotate_rgba_into, Rotation};
 pub use scanline::ScanlineGrid;
 pub use settings_ui::{descriptors, AnySetting, SettingDescriptor, SettingKind};

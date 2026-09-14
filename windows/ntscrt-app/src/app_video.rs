@@ -149,7 +149,8 @@ impl NtscrtApp {
         let info = video.info.clone();
         self.stop_playback();
         self.video = Some(VideoState::new(video));
-        self.source = first;
+        self.original_source = None;
+        self.source = self.rotate_decoded(first);
         self.source_path = Some(path);
         self.source_version += 1;
         self.ntsc.invalidate();
@@ -168,6 +169,8 @@ impl NtscrtApp {
     /// filling it again.
     pub fn mark_chain_input_edited(&mut self) {
         self.mark_dirty();
+        // Every caller of this is a pipeline setting a preset owns.
+        self.leave_preset();
         let Some(video) = self.video.as_mut() else { return };
         video.generation = video.generation.wrapping_add(1);
         video.processed_source = None;
@@ -181,9 +184,10 @@ impl NtscrtApp {
     fn push_playback_config(&mut self) {
         let json = self.ntsc.settings_json().ok();
         let enabled = self.ntsc_enabled;
+        let rotation = self.rotation;
         let Some(video) = self.video.as_ref() else { return };
         if let Some(pipeline) = &video.playback {
-            pipeline.config.update(enabled, json, video.generation);
+            pipeline.config.update(enabled, json, video.generation, rotation);
         }
     }
 
@@ -209,17 +213,30 @@ impl NtscrtApp {
         self.start_pipeline(next);
     }
 
+    /// Re-decode the frame on screen so a rotation change shows at once
+    /// rather than waiting for the next frame to arrive.
+    pub(crate) fn refresh_rotated_video_frame(&mut self) {
+        let Some(video) = self.video.as_ref() else { return };
+        let frame = video.current_frame_index;
+        let Ok(image) = video.source.frame_at_index(frame) else { return };
+        self.source = self.rotate_decoded(image);
+        if let Some(video) = self.video.as_mut() {
+            video.processed_source = None;
+        }
+    }
+
     /// (Re)start the producer at `frame`.
     fn start_pipeline(&mut self, frame: usize) {
         let json = self.ntsc.settings_json().ok();
         let enabled = self.ntsc_enabled;
+        let rotation = self.rotation;
         let Some(video) = self.video.as_mut() else { return };
 
         // Dropping the old pipeline stops it and joins its thread, so two
         // decoders never compete after a seek.
         video.playback = None;
 
-        let config = Config::new(enabled, json, video.generation);
+        let config = Config::new(enabled, json, video.generation, rotation);
         config.set_cache_probe(Some(video.cache.probe()));
         match PlaybackPipeline::start(
             video.source.clone(),
@@ -276,7 +293,7 @@ impl NtscrtApp {
         let Some(video) = self.video.as_ref() else { return };
         match video.source.frame_at_index(frame) {
             Ok(image) => {
-                self.source = image;
+                self.source = self.rotate_decoded(image);
                 self.source_version += 1;
                 self.frame_count = frame;
                 if let Some(video) = self.video.as_mut() {
@@ -439,6 +456,7 @@ impl NtscrtApp {
         let downscale = self.downscale_spec();
         let ntsc_enabled = self.ntsc_enabled;
         let json = self.ntsc.settings_json().ok();
+        let rotation = self.rotation;
 
         let Some(video) = self.video.as_mut() else { return };
         if video.playing || !ntsc_enabled {
@@ -458,7 +476,7 @@ impl NtscrtApp {
                 Self::update_cached_ranges(video, stamp, true);
                 return;
             }
-            let config = Config::new(true, json, video.generation);
+            let config = Config::new(true, json, video.generation, rotation);
             config.set_cache_probe(Some(video.cache.probe()));
             match PlaybackPipeline::start(
                 video.source.clone(),

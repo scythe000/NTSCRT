@@ -17,6 +17,9 @@ pub struct RenderSettings {
     pub downscale_width: Option<u32>,
     pub downscale_method: DownscaleMethod,
     pub ntsc_enabled: bool,
+    /// Applied to the source before the signal stage. See
+    /// `ntscrt_core::rotation`.
+    pub rotation: ntscrt_core::Rotation,
     /// ntsc-rs preset JSON. None keeps ntsc-rs defaults.
     pub ntsc_preset_json: Option<String>,
     pub shader_id: String,
@@ -36,6 +39,7 @@ impl Default for RenderSettings {
             downscale_width: Some(320),
             downscale_method: DownscaleMethod::Area,
             ntsc_enabled: true,
+            rotation: ntscrt_core::Rotation::None,
             ntsc_preset_json: None,
             shader_id: "royale".to_string(),
             shader_params: Vec::new(),
@@ -367,6 +371,19 @@ impl HeadlessRenderer {
         source: &SourceImage,
         settings: &RenderSettings,
     ) -> Result<(Vec<u8>, u32, u32), Box<dyn std::error::Error>> {
+        // Rotation comes first, before the signal stage — see
+        // `ntscrt_core::rotation` for why the order is not negotiable.
+        let rotated = (settings.rotation != ntscrt_core::Rotation::None).then(|| {
+            let (pixels, width, height) = ntscrt_core::rotate_rgba(
+                &source.pixels,
+                source.width,
+                source.height,
+                settings.rotation,
+            );
+            SourceImage { width, height, pixels }
+        });
+        let source = rotated.as_ref().unwrap_or(source);
+
         let mut sequence = self.begin_sequence(settings, source.size())?;
         self.encode_frame(
             &mut sequence,
