@@ -610,12 +610,16 @@ mod tests {
 
     #[test]
     fn config_snapshots_what_was_last_pushed() {
-        let config = Config::new(true, Some("{}".into()), 1);
-        let (enabled, json, generation, probe) = config.snapshot();
+        let config = Config::new(true, Some("{}".into()), 1, Rotation::None);
+        let (enabled, json, generation, rotation, probe) = config.snapshot();
         assert!(enabled && json.as_deref() == Some("{}") && generation == 1 && probe.is_none());
+        assert_eq!(rotation, Rotation::None);
 
-        config.update(false, None, 7);
-        let (enabled, json, generation, _) = config.snapshot();
+        config.update(false, None, 7, Rotation::Cw90);
+        let (enabled, json, generation, rotation, _) = config.snapshot();
         assert!(!enabled && json.is_none() && generation == 7);
+        // Rotation rides with the rest so the producer picks a turn up on
+        // the very next frame it decodes.
+        assert_eq!(rotation, Rotation::Cw90);
     }
 }
