@@ -8,10 +8,12 @@
 //! [`crate::image_io::SourceImage`] holds.
 
 pub mod cache;
+pub mod export;
 pub mod ffmpeg;
 pub mod playback;
 pub mod source;
 
 pub use cache::{CacheProbe, ChainInputCache, Stamp};
+pub use export::{export, ExportFormat, ExportJob, ExportQuality, ExportSummary, GifSettings};
 pub use playback::PlaybackPipeline;
 pub use source::{is_video_path, SequentialReader, VideoInfo, VideoSource, VIDEO_EXTENSIONS};

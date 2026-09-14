@@ -49,6 +49,14 @@ VIDEO:
     --playback <n>        Play <n> frames of a video input headlessly, through
                           the real producer, schedule and frame cache, and
                           report throughput, drops and cache hits.
+    --export <file>       Encode the whole source to <file>. Every frame is
+                          rendered; nothing is sampled from the cache.
+    --format <name>       h264 | hevc | prores422 | prores422hq | gif
+    --quality <name>      standard | high | veryhigh | maximum (default high)
+    --loop <n>            Repeat the content <n> times in the file (not GIF).
+    --gif-width <px>      GIF width (default 480).
+    --gif-fps <n>         GIF rate: 6, 12, 24 or 30 (default 12).
+    --still-frames <n>    Export a still as video: <n> frames of VHS motion.
 ";
 
 fn main() -> ExitCode {
@@ -315,6 +323,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut settings = RenderSettings::default();
     let mut preset_params: Vec<(String, f32)> = Vec::new();
     let mut playback_frames: Option<usize> = None;
+    let mut export_dest: Option<PathBuf> = None;
+    let mut job = ntscrt_app::video::ExportJob::default();
+    let mut still_frames: Option<u32> = None;
     let mut i = 0;
     while i < args.len() {
         let arg = &args[i];
@@ -328,6 +339,32 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "--frame" => settings.frame_count = value("--frame")?.parse()?,
             "--snap" => settings.snap_to_scanline_grid = true,
             "--playback" => playback_frames = Some(value("--playback")?.parse()?),
+            "--export" => export_dest = Some(PathBuf::from(value("--export")?)),
+            "--loop" => job.loop_count = value("--loop")?.parse()?,
+            "--gif-width" => job.gif.width = value("--gif-width")?.parse()?,
+            "--gif-fps" => job.gif.fps = value("--gif-fps")?.parse()?,
+            "--still-frames" => still_frames = Some(value("--still-frames")?.parse()?),
+            "--format" => {
+                let v = value("--format")?;
+                job.format = match v.to_ascii_lowercase().as_str() {
+                    "h264" => ntscrt_app::video::ExportFormat::H264,
+                    "hevc" => ntscrt_app::video::ExportFormat::Hevc,
+                    "prores422" => ntscrt_app::video::ExportFormat::ProRes422,
+                    "prores422hq" => ntscrt_app::video::ExportFormat::ProRes422HQ,
+                    "gif" => ntscrt_app::video::ExportFormat::Gif,
+                    _ => return Err(format!("unknown format '{v}'").into()),
+                };
+            }
+            "--quality" => {
+                let v = value("--quality")?;
+                job.quality = match v.to_ascii_lowercase().replace(' ', "").as_str() {
+                    "standard" => ntscrt_app::video::ExportQuality::Standard,
+                    "high" => ntscrt_app::video::ExportQuality::High,
+                    "veryhigh" => ntscrt_app::video::ExportQuality::VeryHigh,
+                    "maximum" => ntscrt_app::video::ExportQuality::Maximum,
+                    _ => return Err(format!("unknown quality '{v}'").into()),
+                };
+            }
             "--no-ntsc" => settings.ntsc_enabled = false,
             "--downscale" => {
                 let v = value("--downscale")?;
@@ -372,6 +409,69 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     settings.shader_params = std::mem::take(&mut preset_params);
+
+    // Export names its own destination, so it takes only an input positionally.
+    if let Some(dest) = export_dest {
+        let input = positional
+            .first()
+            .map(PathBuf::from)
+            .ok_or_else(|| format!("--export needs an input
+
+{USAGE}"))?;
+        job.dest = dest;
+
+        // A still exports video only if asked how many frames to make: the
+        // signal stage animates on its own, so there is nothing to infer.
+        let still = if is_video_path(&input) {
+            None
+        } else {
+            let frames = still_frames.ok_or(
+                "exporting a still as video needs --still-frames <n>",
+            )?;
+            Some((frames, 24.0))
+        };
+
+        let mut renderer = HeadlessRenderer::new()?;
+        println!("adapter: {}", renderer.adapter_info().name);
+        if job.format.is_gif() {
+            println!(
+                "gif:     {}px at {} fps (plays at {:.1})",
+                job.gif.width,
+                job.gif.fps,
+                ntscrt_app::video::GifSettings::true_fps(job.gif.fps)
+            );
+        }
+
+        let started = std::time::Instant::now();
+        let mut last = 0u32;
+        let summary = ntscrt_app::video::export(
+            &mut renderer,
+            &settings,
+            &job,
+            &input,
+            still,
+            &mut |done, total| {
+                // One line per 10% so a long export shows progress without
+                // scrolling the terminal.
+                if total > 0 && done * 10 / total > last {
+                    last = done * 10 / total;
+                    println!("  {}%  ({done}/{total} frames)", last * 10);
+                }
+            },
+        )?;
+
+        println!(
+            "wrote:   {} ({}x{}, {} frames at {:.2} fps, {:.1} MB) in {:.1}s",
+            job.dest.display(),
+            summary.width,
+            summary.height,
+            summary.frames,
+            summary.fps,
+            summary.bytes as f64 / (1024.0 * 1024.0),
+            started.elapsed().as_secs_f32()
+        );
+        return Ok(());
+    }
 
     // Playback writes no file, so it takes the input on its own.
     if let Some(frames) = playback_frames {
