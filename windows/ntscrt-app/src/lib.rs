@@ -6,6 +6,7 @@
 
 pub mod app;
 pub mod app_preset;
+pub mod app_video;
 pub mod gpu;
 pub mod image_io;
 pub mod param_gates;
@@ -14,4 +15,4 @@ pub mod render;
 pub mod ui;
 pub mod video;
 
-pub use render::{HeadlessRenderer, RenderSettings};
+pub use render::{FrameSequence, HeadlessRenderer, RenderSettings};

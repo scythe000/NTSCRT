@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use eframe::egui;
 use ntscrt_core::{DownscaleMethod, DownscaleSpec, NtscStage, ScanlineGrid};
 
+use crate::app_video::VideoState;
 use crate::gpu::{chain::ShaderParamMeta, Pipeline, RenderRequest, ShaderChain, WORK_FORMAT};
 use crate::image_io::SourceImage;
 
@@ -52,6 +53,12 @@ pub struct NtscrtApp {
     pub shader_param_meta: Vec<ShaderParamMeta>,
     chain: Option<ShaderChain>,
 
+    // ---- video ----
+    /// The clip, when the source is a video rather than a still. Playback,
+    /// the frame cache and the transport bar all live behind this — see
+    /// `app_video`.
+    pub(crate) video: Option<VideoState>,
+
     // ---- view ----
     pub animate: bool,
     pub compare: bool,
@@ -65,7 +72,7 @@ pub struct NtscrtApp {
     pub snap_to_scanline_grid: bool,
 
     // ---- gpu ----
-    pipeline: Pipeline,
+    pub(crate) pipeline: Pipeline,
     preview_texture: Option<(u32, u32, wgpu::Texture, egui::TextureId)>,
     pipeline_cache: bool,
 
@@ -106,6 +113,7 @@ impl NtscrtApp {
             downscale_method: DownscaleMethod::Area,
             ntsc_enabled: true,
             ntsc: NtscStage::new(),
+            video: None,
             shader_id: "royale".to_string(),
             shader_params: HashMap::new(),
             shader_param_meta: Vec::new(),
@@ -156,6 +164,12 @@ impl NtscrtApp {
     }
 
     pub fn load_source(&mut self, path: PathBuf) {
+        // Videos take the whole other path: decoder, playback, frame cache.
+        if crate::video::is_video_path(&path) {
+            self.load_video(path);
+            return;
+        }
+        self.video = None;
         match SourceImage::load(&path) {
             Ok(img) => {
                 self.status = Some(format!(
@@ -284,10 +298,27 @@ impl NtscrtApp {
         }
 
         // Destructuring splits the borrow: `pipeline`, `ntsc`, `chain`,
-        // `source` and `preview_texture` are disjoint fields, so each can be
-        // borrowed independently.
-        let Self { pipeline, ntsc, chain, source, preview_texture, .. } = self;
+        // `source`, `video` and `preview_texture` are disjoint fields, so
+        // each can be borrowed independently.
+        let Self { pipeline, ntsc, chain, source, preview_texture, video, .. } = self;
         let Some(chain) = chain.as_mut() else { return Some((id, size)) };
+
+        // Video supplies the chain input in two cheaper shapes than "run
+        // everything on the decoded frame":
+        //
+        //  - a cache hit is finished — NTSC and downscale both done — and
+        //    goes straight to the shader chain;
+        //  - the playback producer's output has the NTSC stage baked in
+        //    already, so only the downscale is left.
+        //
+        // Anything else (a still, or a video frame nothing has touched yet)
+        // is the ordinary full path.
+        let prepared = video.as_ref().and_then(|v| v.cached_chain_input.as_ref());
+        let processed = video.as_ref().and_then(|v| v.processed_source.as_deref());
+        let (pixels, ntsc_enabled) = match processed {
+            Some(pixels) => (pixels, false),
+            None => (source.pixels.as_slice(), ntsc_enabled),
+        };
 
         let view = preview_texture
             .as_ref()
@@ -298,12 +329,13 @@ impl NtscrtApp {
             label: Some("ntscrt.preview.encode"),
         });
         let request = RenderRequest {
-            source: &source.pixels,
+            source: pixels,
             source_size: (source.width, source.height),
             downscale,
             ntsc_enabled,
             frame_count,
             source_version,
+            prepared_chain_input: prepared,
             output_size: size,
         };
         let result = pipeline.render(
@@ -346,9 +378,14 @@ impl eframe::App for NtscrtApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
 
-        // Leave Animate on for the real experience: tape noise, jitter and
-        // interlacing only move when the frame index advances.
-        if self.animate {
+        // A playing video drives its own frame index off the wall clock, so
+        // Animate only applies to stills. Both want a repaint every frame.
+        if self.is_playing() {
+            self.consume_playback_frame();
+            ctx.request_repaint();
+        } else if self.animate {
+            // Leave Animate on for the real experience: tape noise, jitter
+            // and interlacing only move when the frame index advances.
             self.frame_count = self.frame_count.wrapping_add(1);
             ctx.request_repaint();
         }
@@ -359,6 +396,18 @@ impl eframe::App for NtscrtApp {
         crate::ui::sidebar(self, ui, render_state.as_ref());
         crate::ui::status_bar(self, ui);
         crate::ui::preview(self, ui, render_state.as_ref());
+
+        if let Some(rs) = render_state.as_ref() {
+            // The chain input the preview just produced is worth keeping for
+            // the RAM preview; and while paused, keep filling the cache in
+            // the background so the next play-through needs no CPU work.
+            if self.is_playing() {
+                self.cache_rendered_chain_input(&rs.device, &rs.queue);
+            } else if self.video.is_some() {
+                self.tick_prerender(&rs.device, &rs.queue);
+                ctx.request_repaint_after(std::time::Duration::from_millis(16));
+            }
+        }
 
         // Files dropped anywhere on the window load as the source, matching
         // the macOS Source panel's drag & drop.

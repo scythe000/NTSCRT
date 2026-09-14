@@ -46,6 +46,37 @@ impl Default for RenderSettings {
     }
 }
 
+/// A loaded chain and its render target, reused across a run of frames.
+///
+/// Created by [`HeadlessRenderer::begin_sequence`]; it borrows nothing, so
+/// the renderer stays free to be used alongside it.
+pub struct FrameSequence {
+    chain: ShaderChain,
+    output: wgpu::Texture,
+    output_view: wgpu::TextureView,
+    /// What the frames actually come out at — this is what an encoder must
+    /// be told, and it differs from the requested height under `--snap`.
+    pub output_size: (u32, u32),
+    downscale: Option<DownscaleSpec>,
+    ntsc_enabled: bool,
+}
+
+impl FrameSequence {
+    /// The chain, for a caller that adjusts parameters between frames.
+    pub fn chain(&self) -> &ShaderChain {
+        &self.chain
+    }
+
+    /// Whether the CPU signal stage runs for the frames that follow.
+    ///
+    /// Playback turns it off, because its background producer has already
+    /// applied the stage to the pixels it hands over, and back on for the
+    /// occasional frame that has to be processed here after all.
+    pub fn set_ntsc_enabled(&mut self, enabled: bool) {
+        self.ntsc_enabled = enabled;
+    }
+}
+
 pub struct HeadlessRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -103,14 +134,21 @@ impl HeadlessRenderer {
         &self.adapter_info
     }
 
-    /// Run `source` through the full pipeline and return RGBA8 pixels plus
-    /// the size actually produced (which differs from the request when
-    /// `snap_to_scanline_grid` is on).
-    pub fn render(
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    /// Load the shader chain and size the target once, for a run of frames.
+    ///
+    /// Video renders thousands of frames with one configuration, and loading
+    /// the chain per frame would dominate the export (crt-royale is a
+    /// ten-pass preset). Stills go through the same path with a run of one,
+    /// so there is no second rendering path to keep in step.
+    pub fn begin_sequence(
         &mut self,
-        source: &SourceImage,
         settings: &RenderSettings,
-    ) -> Result<(Vec<u8>, u32, u32), Box<dyn std::error::Error>> {
+        source_size: (u32, u32),
+    ) -> Result<FrameSequence, Box<dyn std::error::Error>> {
         if let Some(json) = &settings.ntsc_preset_json {
             self.ntsc.set_settings_json(json)?;
         }
@@ -124,7 +162,7 @@ impl HeadlessRenderer {
                 entry.relative_path
             )
         })?;
-        let mut chain = ShaderChain::load(
+        let chain = ShaderChain::load(
             &preset_path,
             &self.device,
             &self.queue,
@@ -136,14 +174,15 @@ impl HeadlessRenderer {
             chain.set_parameter(name, *value);
         }
 
-        let downscale = settings.downscale_width.map(|w| {
-            DownscaleSpec::for_width(w, source.width, source.height, settings.downscale_method)
-        });
-        let chain_size = ScanlineGrid::chain_input_size(source.width, source.height, downscale.as_ref());
+        let (sw, sh) = source_size;
+        let downscale = settings
+            .downscale_width
+            .map(|w| DownscaleSpec::for_width(w, sw, sh, settings.downscale_method));
+        let chain_size = ScanlineGrid::chain_input_size(sw, sh, downscale.as_ref());
 
         // Output width follows the chain input's aspect ratio, then either
         // snaps onto the scanline grid or keeps the requested height.
-        let (out_w, out_h) = if settings.snap_to_scanline_grid {
+        let output_size = if settings.snap_to_scanline_grid {
             ScanlineGrid::snapped_size(chain_size.0, chain_size.1, settings.output_height)
         } else {
             let w = (settings.output_height as f64 * chain_size.0 as f64 / chain_size.1 as f64)
@@ -154,7 +193,11 @@ impl HeadlessRenderer {
 
         let output = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("ntscrt.output"),
-            size: wgpu::Extent3d { width: out_w, height: out_h, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: output_size.0,
+                height: output_size.1,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -167,6 +210,29 @@ impl HeadlessRenderer {
         });
         let output_view = output.create_view(&Default::default());
 
+        Ok(FrameSequence {
+            chain,
+            output,
+            output_view,
+            output_size,
+            downscale,
+            ntsc_enabled: settings.ntsc_enabled,
+        })
+    }
+
+    /// Render one frame of `sequence` into its target, without reading back.
+    ///
+    /// `source_version` lets the NTSC stage reuse its clean copy across
+    /// frames of an unchanging image (a still animating), and must be None
+    /// for video, where every frame is different pixels.
+    pub fn encode_frame(
+        &mut self,
+        sequence: &mut FrameSequence,
+        source: &[u8],
+        source_size: (u32, u32),
+        frame_count: usize,
+        source_version: Option<i64>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("ntscrt.render") });
@@ -176,21 +242,78 @@ impl HeadlessRenderer {
             &self.queue,
             &mut encoder,
             &mut self.ntsc,
-            &mut chain,
+            &mut sequence.chain,
             &RenderRequest {
-                source: &source.pixels,
-                source_size: (source.width, source.height),
-                downscale,
-                ntsc_enabled: settings.ntsc_enabled,
-                frame_count: settings.frame_count,
-                source_version: 0,
-                output_size: (out_w, out_h),
+                source,
+                source_size,
+                downscale: sequence.downscale,
+                ntsc_enabled: sequence.ntsc_enabled,
+                frame_count,
+                // No version means "these are new pixels": the stage snapshots
+                // them rather than restoring the previous frame's.
+                source_version: source_version.unwrap_or(i64::MIN),
+                prepared_chain_input: None,
+                output_size: sequence.output_size,
             },
-            &output_view,
+            &sequence.output_view,
             WORK_FORMAT,
         )?;
+        self.queue.submit(Some(encoder.finish()));
+        Ok(())
+    }
 
-        // ---- readback ----
+    /// Render one frame from a chain input the frame cache already holds —
+    /// the NTSC stage and the downscale are both skipped.
+    pub fn encode_frame_from_chain_input(
+        &mut self,
+        sequence: &mut FrameSequence,
+        chain_input: &wgpu::Texture,
+        frame_count: usize,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("ntscrt.render.cached"),
+        });
+        self.pipeline.render(
+            &self.device,
+            &self.queue,
+            &mut encoder,
+            &mut self.ntsc,
+            &mut sequence.chain,
+            &RenderRequest {
+                // Ignored when a prepared chain input is given, but the source
+                // size still has to be non-degenerate for the early-out.
+                source: &[],
+                source_size: (chain_input.width(), chain_input.height()),
+                downscale: None,
+                ntsc_enabled: false,
+                frame_count,
+                source_version: 0,
+                prepared_chain_input: Some(chain_input),
+                output_size: sequence.output_size,
+            },
+            &sequence.output_view,
+            WORK_FORMAT,
+        )?;
+        self.queue.submit(Some(encoder.finish()));
+        Ok(())
+    }
+
+    /// Take the last render's chain input for the frame cache to keep.
+    pub fn take_chain_input_copy(&mut self) -> Option<(wgpu::Texture, (u32, u32))> {
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("ntscrt.cache_fill"),
+        });
+        let copied = self.pipeline.copy_last_chain_input(&self.device, &mut encoder)?;
+        self.queue.submit(Some(encoder.finish()));
+        Some(copied)
+    }
+
+    /// Copy a rendered frame back to the CPU as tightly packed RGBA8.
+    pub fn read_back(
+        &mut self,
+        sequence: &FrameSequence,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let (out_w, out_h) = sequence.output_size;
         let padded = padded_bytes_per_row(out_w);
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ntscrt.readback"),
@@ -198,9 +321,12 @@ impl HeadlessRenderer {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("ntscrt.readback"),
+        });
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
-                texture: &output,
+                texture: &sequence.output,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -230,7 +356,28 @@ impl HeadlessRenderer {
             unpad_rows(&view, padded, out_w, out_h)
         };
         buffer.unmap();
-        Ok((pixels, out_w, out_h))
+        Ok(pixels)
+    }
+
+    /// Run `source` through the full pipeline and return RGBA8 pixels plus
+    /// the size actually produced (which differs from the request when
+    /// `snap_to_scanline_grid` is on).
+    pub fn render(
+        &mut self,
+        source: &SourceImage,
+        settings: &RenderSettings,
+    ) -> Result<(Vec<u8>, u32, u32), Box<dyn std::error::Error>> {
+        let mut sequence = self.begin_sequence(settings, source.size())?;
+        self.encode_frame(
+            &mut sequence,
+            &source.pixels,
+            source.size(),
+            settings.frame_count,
+            Some(0),
+        )?;
+        let pixels = self.read_back(&sequence)?;
+        let (w, h) = sequence.output_size;
+        Ok((pixels, w, h))
     }
 
     /// Load a shader and report the parameters it declares, in order.

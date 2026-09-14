@@ -58,11 +58,13 @@ pub fn top_bar(app: &mut NtscrtApp, root: &mut egui::Ui, rs: Option<&RenderState
         ui.add_space(2.0);
     });
 
-    // Keyboard shortcuts, matching the macOS Command-key equivalents.
-    let (open, export) = ctx.input(|i: &egui::InputState| {
+    // Keyboard shortcuts, matching the macOS Command-key equivalents. Space
+    // is play/pause, as it is in every player.
+    let (open, export, play) = ctx.input(|i: &egui::InputState| {
         (
             i.modifiers.ctrl && i.key_pressed(egui::Key::O),
             i.modifiers.ctrl && i.key_pressed(egui::Key::E),
+            i.key_pressed(egui::Key::Space),
         )
     });
     if open {
@@ -70,6 +72,9 @@ pub fn top_bar(app: &mut NtscrtApp, root: &mut egui::Ui, rs: Option<&RenderState
     }
     if export {
         pick_export(app);
+    }
+    if play && app.video.is_some() {
+        app.toggle_playback();
     }
 
     let _ = rs;
@@ -143,8 +148,17 @@ fn load_preset(app: &mut NtscrtApp, path: &std::path::Path, rs: Option<&RenderSt
 }
 
 fn pick_source(app: &mut NtscrtApp) {
+    // One "everything" filter first, so Open finds either kind without the
+    // user having to know which list a file is in.
+    let everything: Vec<&str> = crate::image_io::SourceImage::EXTENSIONS
+        .iter()
+        .chain(crate::video::VIDEO_EXTENSIONS.iter())
+        .copied()
+        .collect();
     if let Some(path) = rfd::FileDialog::new()
+        .add_filter("Images & video", &everything)
         .add_filter("Images", crate::image_io::SourceImage::EXTENSIONS)
+        .add_filter("Video", crate::video::VIDEO_EXTENSIONS)
         .pick_file()
     {
         app.load_source(path);

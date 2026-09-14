@@ -22,7 +22,7 @@ pub fn show(app: &mut NtscrtApp, ui: &mut egui::Ui) {
                 .checkbox(&mut app.ntsc_enabled, "Apply NTSC/VHS signal stage")
                 .changed()
             {
-                app.mark_dirty();
+                app.mark_chain_input_edited();
             }
 
             ui.horizontal(|ui| {
@@ -55,7 +55,7 @@ pub fn show(app: &mut NtscrtApp, ui: &mut egui::Ui) {
                                     "Loaded preset {}",
                                     path.file_name().unwrap_or_default().to_string_lossy()
                                 ));
-                                app.mark_dirty();
+                                app.mark_chain_input_edited();
                             }
                             Err(e) => app.error = Some(format!("Preset failed to load: {e}")),
                         }
@@ -185,6 +185,6 @@ fn set(
     if let Err(e) = app.ntsc.set_any(&desc.id, value) {
         app.error = Some(format!("{}: {e}", desc.label));
     } else {
-        app.mark_dirty();
+        app.mark_chain_input_edited();
     }
 }

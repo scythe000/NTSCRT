@@ -16,7 +16,7 @@ pub fn show(app: &mut NtscrtApp, ui: &mut egui::Ui) {
                 .checkbox(&mut app.downscale_enabled, "Downscale before shader")
                 .changed()
             {
-                app.mark_dirty();
+                app.mark_chain_input_edited();
             }
 
             ui.add_enabled_ui(app.downscale_enabled, |ui| {
@@ -31,7 +31,7 @@ pub fn show(app: &mut NtscrtApp, ui: &mut egui::Ui) {
                             if ui.selectable_label(false, *label).clicked() {
                                 app.downscale_width = *width;
                                 app.downscale_preset = label.to_string();
-                                app.mark_dirty();
+                                app.mark_chain_input_edited();
                             }
                         }
                         ui.separator();
@@ -57,7 +57,7 @@ pub fn show(app: &mut NtscrtApp, ui: &mut egui::Ui) {
                                 app.downscale_preset = "Custom".to_string();
                             }
                         }
-                        app.mark_dirty();
+                        app.mark_chain_input_edited();
                     }
 
                     if let Some(spec) = app.downscale_spec() {
@@ -84,7 +84,7 @@ pub fn show(app: &mut NtscrtApp, ui: &mut egui::Ui) {
                                 .clicked()
                             {
                                 app.downscale_method = m;
-                                app.mark_dirty();
+                                app.mark_chain_input_edited();
                             }
                         }
                     });

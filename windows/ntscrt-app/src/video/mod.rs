@@ -7,7 +7,11 @@
 //! frames arrive as tightly packed RGBA8, exactly the shape
 //! [`crate::image_io::SourceImage`] holds.
 
+pub mod cache;
 pub mod ffmpeg;
+pub mod playback;
 pub mod source;
 
+pub use cache::{CacheProbe, ChainInputCache, Stamp};
+pub use playback::PlaybackPipeline;
 pub use source::{is_video_path, SequentialReader, VideoInfo, VideoSource, VIDEO_EXTENSIONS};

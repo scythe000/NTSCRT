@@ -46,6 +46,9 @@ OPTIONS:
 
 VIDEO:
     --video-info <file>   Probe a clip and report size, rate and frame count.
+    --playback <n>        Play <n> frames of a video input headlessly, through
+                          the real producer, schedule and frame cache, and
+                          report throughput, drops and cache hits.
 ";
 
 fn main() -> ExitCode {
@@ -57,6 +60,155 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// One line summarising a clip, printed by every path that opens one.
+fn describe(video: &VideoSource) -> String {
+    let i = &video.info;
+    format!(
+        "video:   {}x{} {:.3} fps, {} frames ({:.2}s), {}",
+        i.width, i.height, i.frame_rate, i.total_frames, i.duration_seconds, i.video_codec
+    )
+}
+
+/// Play `frames` frames of `video` with no window, driving exactly what the
+/// app drives: the background producer, the wall-clock schedule, and the
+/// RAM-preview frame cache.
+///
+/// This is the video counterpart of rendering a still and looking at it — it
+/// is the only way to see, on a machine with no display, whether playback
+/// keeps up and whether the cache is doing its job on the second pass.
+fn run_playback(
+    video: &VideoSource,
+    settings: &RenderSettings,
+    frames: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use ntscrt_app::video::cache::{ChainInputCache, Stamp};
+    use ntscrt_app::video::playback::{Config, PlaybackPipeline};
+
+    let mut renderer = HeadlessRenderer::new()?;
+    let info = renderer.adapter_info();
+    println!("adapter: {} ({:?})", info.name, info.backend);
+
+    let mut sequence = renderer.begin_sequence(settings, video.size())?;
+    println!(
+        "output:  {}x{}",
+        sequence.output_size.0, sequence.output_size.1
+    );
+
+    // One generation for the whole run: nothing edits settings mid-playback
+    // here, so every frame the producer makes stays valid.
+    const GENERATION: u64 = 1;
+    let mut cache: ChainInputCache<wgpu::Texture> = ChainInputCache::new();
+    let stamp = Stamp {
+        generation: GENERATION,
+        downscale: settings.downscale_width.map(|w| {
+            ntscrt_core::DownscaleSpec::for_width(
+                w,
+                video.info.width,
+                video.info.height,
+                settings.downscale_method,
+            )
+        }),
+    };
+
+    let config = Config::new(
+        settings.ntsc_enabled,
+        settings.ntsc_preset_json.clone(),
+        GENERATION,
+    );
+    config.set_cache_probe(Some(cache.probe()));
+    let pipeline = PlaybackPipeline::start(
+        video.clone(),
+        0,
+        config,
+        PlaybackPipeline::DEFAULT_QUEUE_DEPTH,
+    )?;
+
+    let fps = video.info.frame_rate.max(1.0);
+    let mut displayed = 0usize;
+    let mut dropped = 0usize;
+    let mut cache_hits = 0usize;
+
+    // Prime: the clock starts when the first frame exists, so the schedule
+    // cannot run ahead of a producer that hasn't begun.
+    let start = std::time::Instant::now();
+    while !pipeline.has_output() {
+        if start.elapsed().as_secs_f64() > 10.0 {
+            return Err("the producer emitted no frames within 10s".into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    let clock_start = std::time::Instant::now();
+    let schedule_base = pipeline.first_queued_index().unwrap_or(0);
+
+    while displayed < frames {
+        let schedule = schedule_base + (clock_start.elapsed().as_secs_f64() * fps) as usize;
+        pipeline.set_target_absolute_index(schedule);
+        let (output, just_dropped) = pipeline.take_ready(schedule, GENERATION);
+        dropped += just_dropped;
+        let Some(output) = output else {
+            // Nothing due yet. The app is woken by egui's repaint clock; here
+            // a short sleep stands in for it, comfortably finer than a frame
+            // budget at any sane rate.
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            continue;
+        };
+
+        // The producer skips the NTSC stage for frames the cache holds; serve
+        // those from the cache and skip the downscale too.
+        let cached = (output.processed.is_none() && settings.ntsc_enabled)
+            .then(|| cache.lookup(output.frame_index, stamp))
+            .flatten();
+        match cached {
+            Some(chain_input) => {
+                cache_hits += 1;
+                renderer.encode_frame_from_chain_input(
+                    &mut sequence,
+                    chain_input,
+                    output.frame_index,
+                )?;
+            }
+            None => {
+                // Normally the producer's output already has the signal stage
+                // baked in, leaving only the downscale and the chain. The
+                // fallback covers the frame it skipped for a cache entry that
+                // then turned out not to be usable.
+                let pixels = output.processed.as_deref().unwrap_or(&output.clean);
+                sequence.set_ntsc_enabled(settings.ntsc_enabled && output.processed.is_none());
+                renderer.encode_frame(
+                    &mut sequence,
+                    pixels,
+                    output.size,
+                    output.frame_index,
+                    None,
+                )?;
+                if let Some((copy, size)) = renderer.take_chain_input_copy() {
+                    if cache.has_room(ChainInputCache::<wgpu::Texture>::byte_count(size.0, size.1)) {
+                        cache.insert(output.frame_index, copy, size, stamp);
+                    }
+                }
+            }
+        }
+        displayed += 1;
+    }
+
+    let seconds = clock_start.elapsed().as_secs_f64().max(1e-6);
+    println!(
+        "played:  {displayed} frames in {seconds:.2}s = {:.1} fps (clip is {:.1} fps)",
+        displayed as f64 / seconds,
+        fps
+    );
+    println!("dropped: {dropped}");
+    println!(
+        "cache:   {} hits, {} frames held ({} MB of {} MB)",
+        cache_hits,
+        cache.len(),
+        cache.bytes() >> 20,
+        cache.capacity() >> 20
+    );
+    println!("queue:   {}", pipeline.take_stats_line());
+    Ok(())
 }
 
 /// Report what ffmpeg is available and what it says about a clip — the video
@@ -162,6 +314,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut positional: Vec<String> = Vec::new();
     let mut settings = RenderSettings::default();
     let mut preset_params: Vec<(String, f32)> = Vec::new();
+    let mut playback_frames: Option<usize> = None;
     let mut i = 0;
     while i < args.len() {
         let arg = &args[i];
@@ -174,6 +327,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "--height" => settings.output_height = value("--height")?.parse()?,
             "--frame" => settings.frame_count = value("--frame")?.parse()?,
             "--snap" => settings.snap_to_scanline_grid = true,
+            "--playback" => playback_frames = Some(value("--playback")?.parse()?),
             "--no-ntsc" => settings.ntsc_enabled = false,
             "--downscale" => {
                 let v = value("--downscale")?;
@@ -217,28 +371,34 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         i += 1;
     }
 
+    settings.shader_params = std::mem::take(&mut preset_params);
+
+    // Playback writes no file, so it takes the input on its own.
+    if let Some(frames) = playback_frames {
+        let input = positional
+            .first()
+            .map(PathBuf::from)
+            .ok_or_else(|| format!("--playback needs a video input\n\n{USAGE}"))?;
+        if !is_video_path(&input) {
+            return Err(format!("--playback needs a video file, not {}", input.display()).into());
+        }
+        let video = VideoSource::open(&input)?;
+        println!("{}", describe(&video));
+        return run_playback(&video, &settings, frames);
+    }
+
     if positional.len() != 2 {
         return Err(format!("expected <input> and <output.png>\n\n{USAGE}").into());
     }
     let input = PathBuf::from(&positional[0]);
     let output = PathBuf::from(&positional[1]);
 
-    settings.shader_params = preset_params;
-
     // A video input renders one frame: `--frame` picks it, and the same index
     // seeds the signal stage's RNG, so the still you get back is the frame
     // the player would show at that position.
     let source = if is_video_path(&input) {
         let video = VideoSource::open(&input)?;
-        println!(
-            "video:   {}x{} {:.3} fps, {} frames ({:.2}s), {}",
-            video.info.width,
-            video.info.height,
-            video.info.frame_rate,
-            video.info.total_frames,
-            video.info.duration_seconds,
-            video.info.video_codec
-        );
+        println!("{}", describe(&video));
         video.frame_at_index(settings.frame_count)?
     } else {
         SourceImage::load(&input).map_err(|e| format!("could not read {}: {e}", input.display()))?

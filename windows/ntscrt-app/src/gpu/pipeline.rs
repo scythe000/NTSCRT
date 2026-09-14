@@ -37,6 +37,15 @@ pub struct RenderRequest<'a> {
     /// unchanged pixels. See `NtscStage::process`.
     pub source_version: i64,
     pub output_size: (u32, u32),
+    /// A chain input that is already finished — the NTSC stage *and* the
+    /// downscale have run. Set by the frame cache on a hit (see
+    /// `video::ChainInputCache`), in which case both stages are skipped and
+    /// `source`, `downscale` and `ntsc_enabled` are ignored.
+    ///
+    /// Note this is not how the playback producer's output arrives: that has
+    /// only the NTSC stage baked in and still needs downscaling, so it comes
+    /// through `source` with `ntsc_enabled` off.
+    pub prepared_chain_input: Option<&'a wgpu::Texture>,
 }
 
 pub struct Pipeline {
@@ -50,6 +59,11 @@ pub struct Pipeline {
     upload: Option<(u32, u32, wgpu::Texture)>,
     /// Oversized render target for the supersampled scanline pass.
     supersample: Option<(u32, u32, wgpu::Texture)>,
+    /// Whatever fed the shader chain last. The frame cache copies out of it
+    /// after a render, which is how a played frame gets into the RAM preview
+    /// without being recomputed. Textures are handles, so this is a refcount
+    /// bump, not a copy.
+    last_chain_input: Option<wgpu::Texture>,
 }
 
 impl Pipeline {
@@ -60,7 +74,58 @@ impl Pipeline {
             chain_input: None,
             upload: None,
             supersample: None,
+            last_chain_input: None,
         }
+    }
+
+    /// The texture that fed the shader chain on the last successful render.
+    ///
+    /// This is the chain input the frame cache stores: NTSC applied and
+    /// downscaled, the small representation the RAM preview keeps per frame.
+    pub fn last_chain_input(&self) -> Option<&wgpu::Texture> {
+        self.last_chain_input.as_ref()
+    }
+
+    /// Copy the last render's chain input into a texture of its own, which is
+    /// what the frame cache keeps.
+    ///
+    /// The copy is necessary: the pipeline's own chain-input texture is
+    /// reused by the very next frame, so handing the cache that handle would
+    /// give it a slot whose contents keep changing. Encodes into `encoder`;
+    /// the caller submits.
+    pub fn copy_last_chain_input(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> Option<(wgpu::Texture, (u32, u32))> {
+        let source = self.last_chain_input.as_ref()?;
+        let (width, height) = (source.width(), source.height());
+        let copy = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("ntscrt.cached_chain_input"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: WORK_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: source,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: &copy,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        );
+        Some((copy, (width, height)))
     }
 
     /// Render one frame into `output_view`.
@@ -84,56 +149,74 @@ impl Pipeline {
             return Ok(());
         }
 
-        // ---- NTSC stage (CPU, full resolution) ----
-        let row_bytes = sw * 4;
-        let needed = (row_bytes * sh) as usize;
-        let pixels: &[u8] = if request.ntsc_enabled {
-            if self.ntsc_buf.len() != needed {
-                self.ntsc_buf.resize(needed, 0);
-            }
-            self.ntsc_buf.copy_from_slice(&request.source[..needed]);
-            ntsc.process(
-                &mut self.ntsc_buf,
-                PixelFormat::Rgba8,
-                sw,
-                sh,
-                row_bytes,
-                request.frame_count as i64,
-                Some(request.source_version),
-            )?;
-            &self.ntsc_buf
-        } else {
-            &request.source[..needed]
-        };
-
-        // ---- upload + downscale ----
-        let chain_size = ScanlineGrid::chain_input_size(sw, sh, request.downscale.as_ref());
-
-        let chain_input = match request.downscale {
-            Some(spec) => {
-                // Upload at full res, then run the kernel into the chain input.
-                let upload = Self::obtain(device, &mut self.upload, sw, sh, "ntscrt.upload", false);
-                Self::write(queue, upload, pixels, sw, sh);
-                let up_view = upload.create_view(&Default::default());
-
-                let dst = Self::obtain(
-                    device, &mut self.chain_input, spec.width, spec.height, "ntscrt.chain_input", false,
-                );
-                let dst_view = dst.create_view(&Default::default());
-                self.downscaler.encode(
-                    device, encoder,
-                    &up_view, (sw, sh),
-                    &dst_view, (spec.width, spec.height),
-                    spec.method,
-                );
-                dst
-            }
+        // A cache hit arrives with both CPU stages already done, so the whole
+        // NTSC/upload/downscale half below is skipped and the chain reads the
+        // stored texture directly — that is the entire point of the RAM
+        // preview.
+        // Textures are refcounted handles, so the clones here are bookkeeping,
+        // not copies — and taking one ends the borrow of `self` that
+        // `obtain` holds, leaving the downscaler free to be used below.
+        let (chain_input, chain_size) = match request.prepared_chain_input {
+            Some(tex) => (tex.clone(), (tex.width(), tex.height())),
             None => {
-                let tex = Self::obtain(device, &mut self.chain_input, sw, sh, "ntscrt.chain_input", false);
-                Self::write(queue, tex, pixels, sw, sh);
-                tex
+                // ---- NTSC stage (CPU, full resolution) ----
+                let row_bytes = sw * 4;
+                let needed = (row_bytes * sh) as usize;
+                let pixels: &[u8] = if request.ntsc_enabled {
+                    if self.ntsc_buf.len() != needed {
+                        self.ntsc_buf.resize(needed, 0);
+                    }
+                    self.ntsc_buf.copy_from_slice(&request.source[..needed]);
+                    ntsc.process(
+                        &mut self.ntsc_buf,
+                        PixelFormat::Rgba8,
+                        sw,
+                        sh,
+                        row_bytes,
+                        request.frame_count as i64,
+                        Some(request.source_version),
+                    )?;
+                    &self.ntsc_buf
+                } else {
+                    &request.source[..needed]
+                };
+
+                // ---- upload + downscale ----
+                let size = ScanlineGrid::chain_input_size(sw, sh, request.downscale.as_ref());
+                let tex: wgpu::Texture = match request.downscale {
+                    Some(spec) => {
+                        // Upload at full res, then run the kernel into the chain input.
+                        let upload =
+                            Self::obtain(device, &mut self.upload, sw, sh, "ntscrt.upload", false);
+                        Self::write(queue, upload, pixels, sw, sh);
+                        let up_view = upload.create_view(&Default::default());
+
+                        let dst = Self::obtain(
+                            device, &mut self.chain_input, spec.width, spec.height,
+                            "ntscrt.chain_input", false,
+                        );
+                        let dst_view = dst.create_view(&Default::default());
+                        self.downscaler.encode(
+                            device, encoder,
+                            &up_view, (sw, sh),
+                            &dst_view, (spec.width, spec.height),
+                            spec.method,
+                        );
+                        dst.clone()
+                    }
+                    None => {
+                        let tex = Self::obtain(
+                            device, &mut self.chain_input, sw, sh, "ntscrt.chain_input", false,
+                        );
+                        Self::write(queue, tex, pixels, sw, sh);
+                        tex.clone()
+                    }
+                };
+                (tex, size)
             }
         };
+        self.last_chain_input = Some(chain_input.clone());
+        let chain_input = &chain_input;
 
         // ---- CRT shader ----
         // CRT shaders draw scanlines in *output* pixels. When the output
@@ -167,6 +250,64 @@ impl Pipeline {
         Ok(())
     }
 
+    /// Upload `pixels` and run the downscale into a texture of its own,
+    /// stopping short of the shader chain.
+    ///
+    /// This is the pre-render path: while a video sits paused, frames are
+    /// decoded and processed in the background and turned into chain inputs
+    /// for the cache, with nothing drawn. `pixels` already has the NTSC stage
+    /// applied (the producer did it), so only the downscale is left.
+    pub fn encode_chain_input_copy(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        pixels: &[u8],
+        size: (u32, u32),
+        downscale: Option<DownscaleSpec>,
+    ) -> Option<(wgpu::Texture, (u32, u32))> {
+        let (sw, sh) = size;
+        if sw == 0 || sh == 0 || pixels.len() < (sw as usize * sh as usize * 4) {
+            return None;
+        }
+        let out_size = ScanlineGrid::chain_input_size(sw, sh, downscale.as_ref());
+        let copy = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("ntscrt.cached_chain_input"),
+            size: wgpu::Extent3d {
+                width: out_size.0,
+                height: out_size.1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: WORK_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::STORAGE_BINDING,
+            view_formats: &[],
+        });
+
+        match downscale {
+            Some(spec) => {
+                let upload = Self::obtain(device, &mut self.upload, sw, sh, "ntscrt.upload", false);
+                Self::write(queue, upload, pixels, sw, sh);
+                let up_view = upload.create_view(&Default::default());
+                let dst_view = copy.create_view(&Default::default());
+                self.downscaler.encode(
+                    device, encoder,
+                    &up_view, (sw, sh),
+                    &dst_view, out_size,
+                    spec.method,
+                );
+            }
+            // With the stage off the chain input is the frame itself, so
+            // there is nothing to run — just put the pixels where they go.
+            None => Self::write(queue, &copy, pixels, sw, sh),
+        }
+        Some((copy, out_size))
+    }
+
     /// Get or recreate a cached texture at the requested size.
     ///
     /// `render_target` textures are written by the shader chain and read by
@@ -182,7 +323,11 @@ impl Pipeline {
     ) -> &'t wgpu::Texture {
         let matches = matches!(slot, Some((w, h, _)) if *w == width && *h == height);
         if !matches {
-            let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
+            // COPY_SRC throughout: the frame cache copies the chain input out
+            // after a render (see `copy_last_chain_input`).
+            let mut usage = wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC;
             if render_target {
                 usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
             } else {
