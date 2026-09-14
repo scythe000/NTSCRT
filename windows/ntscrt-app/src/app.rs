@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use eframe::egui;
 use ntscrt_core::{DownscaleMethod, DownscaleSpec, NtscStage, ScanlineGrid};
 
-use crate::gpu::{Pipeline, RenderRequest, ShaderChain, WORK_FORMAT};
+use crate::gpu::{chain::ShaderParamMeta, Pipeline, RenderRequest, ShaderChain, WORK_FORMAT};
 use crate::image_io::SourceImage;
 
 /// Console presets pick a horizontal resolution; the vertical always follows
@@ -46,9 +46,10 @@ pub struct NtscrtApp {
 
     // ---- shader ----
     pub shader_id: String,
+    /// Current value per parameter name.
     pub shader_params: HashMap<String, f32>,
-    /// Descriptions keyed by parameter name, for the hyllian "*" gate rule.
-    pub shader_param_descriptions: HashMap<String, String>,
+    /// Declared metadata (label, range, step) in shader declaration order.
+    pub shader_param_meta: Vec<ShaderParamMeta>,
     chain: Option<ShaderChain>,
 
     // ---- view ----
@@ -71,6 +72,11 @@ pub struct NtscrtApp {
     /// Untouched source uploaded for the compare split, keyed by
     /// `source_version` so it is re-uploaded only when the image changes.
     pub(crate) source_texture: Option<(i64, egui::TextureHandle)>,
+
+    /// Timeline section of the last preset loaded, kept verbatim. This build
+    /// has no keyframe animation, but saving must not destroy a preset's
+    /// keyframes — see `app_preset`.
+    pub(crate) loaded_timeline: Option<serde_json::Value>,
 
     pub status: Option<String>,
     pub error: Option<String>,
@@ -102,7 +108,7 @@ impl NtscrtApp {
             ntsc: NtscStage::new(),
             shader_id: "royale".to_string(),
             shader_params: HashMap::new(),
-            shader_param_descriptions: HashMap::new(),
+            shader_param_meta: Vec::new(),
             chain: None,
             animate: false,
             compare: false,
@@ -115,6 +121,7 @@ impl NtscrtApp {
             preview_texture: None,
             pipeline_cache,
             source_texture: None,
+            loaded_timeline: None,
             status: None,
             error: None,
             dirty: true,
@@ -185,11 +192,13 @@ impl NtscrtApp {
         match ShaderChain::load(&path, device, queue, None, self.pipeline_cache) {
             Ok(chain) => {
                 self.shader_params.clear();
-                self.shader_param_descriptions.clear();
-                for name in chain.parameter_names() {
-                    if let Some(v) = chain.parameter(name) {
-                        self.shader_params.insert(name.clone(), v);
-                    }
+                self.shader_param_meta = chain.parameters().to_vec();
+                for p in &self.shader_param_meta {
+                    // Prefer what the chain actually holds (the preset may
+                    // override the shader's own default); fall back to the
+                    // declared initial value.
+                    let v = chain.parameter(&p.name).unwrap_or(p.initial);
+                    self.shader_params.insert(p.name.clone(), v);
                 }
                 self.chain = Some(chain);
                 self.error = None;
@@ -373,6 +382,115 @@ impl NtscrtApp {
         self.render_preview(render_state, size)
     }
 
+    /// Capture the current configuration as a preset.
+    ///
+    /// `timeline` is carried over from whatever was last loaded so keyframes
+    /// this build cannot play are not destroyed by a save.
+    pub(crate) fn to_preset(&self) -> crate::app_preset::AppPreset {
+        use crate::app_preset::*;
+        AppPreset {
+            version: 1,
+            downscale: DownscaleSection {
+                enabled: self.downscale_enabled,
+                method: self.downscale_method.raw_value().to_string(),
+                preset: self.downscale_preset.clone(),
+                width: self.downscale_width,
+            },
+            ntsc: NtscSection {
+                enabled: self.ntsc_enabled,
+                settings: self
+                    .ntsc
+                    .settings_json()
+                    .ok()
+                    .and_then(|j| serde_json::from_str(&j).ok())
+                    .unwrap_or(serde_json::Value::Null),
+            },
+            shader: ShaderSection {
+                enabled: true,
+                preset: self.shader_id.clone(),
+                params: self.shader_params.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+            },
+            view: ViewSection {
+                animate: self.animate,
+                compare: self.compare,
+                integer_scale: true,
+            },
+            timeline: self.loaded_timeline.clone(),
+        }
+    }
+
+    /// Apply a loaded preset. Returns a human-readable note when something
+    /// in the preset could not be applied, so the UI can say so rather than
+    /// leaving the user to spot it.
+    pub(crate) fn apply_preset(
+        &mut self,
+        preset: crate::app_preset::AppPreset,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Option<String> {
+        use std::str::FromStr;
+        let mut notes: Vec<String> = Vec::new();
+
+        self.downscale_enabled = preset.downscale.enabled;
+        self.downscale_width = preset.downscale.width.clamp(16, 4096);
+        self.downscale_preset = preset.downscale.preset.clone();
+        match DownscaleMethod::from_str(&preset.downscale.method) {
+            Ok(m) => self.downscale_method = m,
+            Err(()) => notes.push(format!(
+                "unknown downscale method '{}', kept {}",
+                preset.downscale.method,
+                self.downscale_method.display_name()
+            )),
+        }
+
+        self.ntsc_enabled = preset.ntsc.enabled;
+        if !preset.ntsc.settings.is_null() {
+            let json = preset.ntsc.settings.to_string();
+            if let Err(e) = self.ntsc.set_settings_json(&json) {
+                notes.push(format!("NTSC settings not applied: {e}"));
+            }
+        }
+
+        // Swap the shader before pushing parameters — the chain owns them,
+        // and a chain for the wrong preset would reject the names.
+        if crate::presets::find(&preset.shader.preset).is_some() {
+            if self.shader_id != preset.shader.preset {
+                self.shader_id = preset.shader.preset.clone();
+                self.reload_chain(device, queue);
+            }
+            let mut unknown = 0usize;
+            for (name, value) in &preset.shader.params {
+                if self.shader_params.contains_key(name) {
+                    self.set_shader_param(name, *value);
+                } else {
+                    unknown += 1;
+                }
+            }
+            if unknown > 0 {
+                notes.push(format!(
+                    "{unknown} shader parameter(s) in the preset aren't in this shader build"
+                ));
+            }
+        } else {
+            notes.push(format!("unknown shader '{}'", preset.shader.preset));
+        }
+
+        self.animate = preset.view.animate;
+        self.compare = preset.view.compare;
+
+        if preset.has_keyframes() {
+            notes.push(
+                "this preset carries keyframes; this build has no timeline, so they are \
+                 preserved but not played"
+                    .to_string(),
+            );
+        }
+        self.loaded_timeline = preset.timeline;
+
+        self.mark_dirty();
+        (!notes.is_empty()).then(|| notes.join(" \u{2014} "))
+    }
+
     /// Shared by the sidebar's Export button and the CLI path.
     pub(crate) fn export_png(&mut self, dest: PathBuf) {
         let settings = crate::RenderSettings {
@@ -381,6 +499,7 @@ impl NtscrtApp {
             ntsc_enabled: self.ntsc_enabled,
             ntsc_preset_json: self.ntsc.settings_json().ok(),
             shader_id: self.shader_id.clone(),
+            shader_params: self.shader_params.iter().map(|(k, v)| (k.clone(), *v)).collect(),
             output_height: self.export_height,
             snap_to_scanline_grid: self.snap_to_scanline_grid,
             frame_count: self.frame_count,

@@ -14,17 +14,54 @@
 
 use std::path::Path;
 
-use librashader::presets::ShaderPreset;
-use librashader::runtime::wgpu::{FilterChain, FilterChainOptions, WgpuOutputView};
+use librashader::presets::{ShaderPreset, ShaderPresetPack};
+use librashader::runtime::wgpu::{error::FilterChainError, FilterChain, FilterChainOptions, WgpuOutputView};
 use librashader::runtime::{FilterChainParameters, Size, Viewport};
 // Not re-exported through the librashader facade in 0.12; cargo unifies the
 // version with the one librashader itself depends on.
 use librashader_common::shader_features::ShaderFeatures;
 
+/// One runtime-tweakable shader parameter, as the shader author declared it
+/// with `#pragma parameter`.
+///
+/// The macOS `ShaderPanel` gets this from librashader's C API; here it comes
+/// off the preset pack. Without the range the UI can only offer a bare number
+/// field, and without the description the hyllian "*" gate rule (see
+/// `param_gates`) has nothing to match on.
+#[derive(Debug, Clone)]
+pub struct ShaderParamMeta {
+    pub name: String,
+    /// Human-readable label from the shader source.
+    pub description: String,
+    pub initial: f32,
+    pub minimum: f32,
+    pub maximum: f32,
+    pub step: f32,
+}
+
+impl ShaderParamMeta {
+    /// True when the declared range is usable for a slider. Some shaders
+    /// declare a degenerate range (min == max, or a zero/NaN step), and
+    /// egui's slider panics or misbehaves on those.
+    pub fn has_usable_range(&self) -> bool {
+        self.minimum.is_finite()
+            && self.maximum.is_finite()
+            && self.maximum > self.minimum
+    }
+
+    /// Whether the shader declared this as an on/off switch: a 0..1 range
+    /// stepping by 1. Those read far better as a checkbox than a slider.
+    pub fn is_toggle(&self) -> bool {
+        self.minimum == 0.0 && self.maximum == 1.0 && self.step == 1.0
+    }
+}
+
 pub struct ShaderChain {
     chain: FilterChain,
-    /// Parameter names the loaded preset actually exposes, in preset order.
-    parameter_names: Vec<String>,
+    /// Parameters the loaded preset exposes, in the order the shader author
+    /// declared them — the CRT panel presents controls in that order, as the
+    /// Swift ShaderPanel does.
+    parameters: Vec<ShaderParamMeta>,
     preset_path: std::path::PathBuf,
 }
 
@@ -49,28 +86,59 @@ impl ShaderChain {
         // slang-shaders expect to be available; sensors are irrelevant here.
         let features = ShaderFeatures::ORIGINAL_ASPECT_UNIFORMS | ShaderFeatures::FRAMETIME_UNIFORMS;
 
-        // Parse the preset separately so the parameter list can be read in
-        // declaration order — the CRT panel presents controls in the order
-        // the shader author wrote them, as the Swift ShaderPanel does.
+        // Three steps rather than one `load_from_path`, because the parameter
+        // metadata is only available in between: the preset fixes the
+        // declaration order, the pack carries each parameter's description and
+        // range from its `#pragma parameter` line, and the chain consumes the
+        // pack. Going straight from path to chain would throw both away.
         let preset = ShaderPreset::try_parse(path, features)?;
-        let parameter_names = preset.parameters.iter().map(|p| p.name.to_string()).collect();
+        let order: Vec<String> = preset.parameters.iter().map(|p| p.name.to_string()).collect();
+
+        let pack = ShaderPresetPack::load_from_preset::<FilterChainError>(preset)?;
+
+        // Merge every pass's parameter table. A multi-pass preset can declare
+        // the same parameter in more than one pass; first declaration wins,
+        // which is the order the panel shows.
+        let mut meta: std::collections::HashMap<String, ShaderParamMeta> =
+            std::collections::HashMap::new();
+        for pass in &pack.passes {
+            for (name, p) in &pass.data.parameters {
+                meta.entry(name.to_string()).or_insert_with(|| ShaderParamMeta {
+                    name: p.id.to_string(),
+                    description: p.description.clone(),
+                    initial: p.initial,
+                    minimum: p.minimum,
+                    maximum: p.maximum,
+                    step: p.step,
+                });
+            }
+        }
+
+        // Preset order first; anything a pass declares but the preset doesn't
+        // list still gets a control, appended in name order so it is stable.
+        let mut parameters: Vec<ShaderParamMeta> =
+            order.iter().filter_map(|n| meta.remove(n)).collect();
+        let mut leftover: Vec<ShaderParamMeta> = meta.into_values().collect();
+        leftover.sort_by(|a, b| a.name.cmp(&b.name));
+        parameters.extend(leftover);
 
         let options = FilterChainOptions {
             enable_cache,
             adapter_info,
             ..Default::default()
         };
-        let chain = FilterChain::load_from_preset(preset, device, queue, Some(&options))?;
+        let chain = FilterChain::load_from_pack(pack, device, queue, Some(&options))?;
 
-        Ok(Self { chain, parameter_names, preset_path: path.to_path_buf() })
+        Ok(Self { chain, parameters, preset_path: path.to_path_buf() })
     }
 
     pub fn preset_path(&self) -> &Path {
         &self.preset_path
     }
 
-    pub fn parameter_names(&self) -> &[String] {
-        &self.parameter_names
+    /// Parameters in the order the shader author declared them.
+    pub fn parameters(&self) -> &[ShaderParamMeta] {
+        &self.parameters
     }
 
     pub fn parameter(&self, name: &str) -> Option<f32> {

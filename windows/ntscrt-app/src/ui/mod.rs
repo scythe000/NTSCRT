@@ -25,6 +25,9 @@ pub fn top_bar(app: &mut NtscrtApp, root: &mut egui::Ui, rs: Option<&RenderState
             if ui.button("Export PNG\u{2026}").on_hover_text("Ctrl+E").clicked() {
                 pick_export(app);
             }
+
+            ui.separator();
+            preset_menu(app, ui, rs);
             ui.separator();
 
             ui.checkbox(&mut app.animate, "Animate")
@@ -70,6 +73,73 @@ pub fn top_bar(app: &mut NtscrtApp, root: &mut egui::Ui, rs: Option<&RenderState
     }
 
     let _ = rs;
+}
+
+/// Preset menu: save/load the whole configuration, plus the bundled presets
+/// listed underneath — the same arrangement as the macOS toolbar.
+fn preset_menu(app: &mut NtscrtApp, ui: &mut egui::Ui, rs: Option<&RenderState>) {
+    ui.menu_button("Preset", |ui| {
+        if ui.button("Load\u{2026}").clicked() {
+            ui.close();
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("NTSCRT preset", &["json"])
+                .set_directory(crate::presets::app_presets_dir().unwrap_or_else(|| ".".into()))
+                .pick_file()
+            {
+                load_preset(app, &path, rs);
+            }
+        }
+        if ui.button("Save as\u{2026}").clicked() {
+            ui.close();
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("NTSCRT preset", &["json"])
+                .set_file_name("My preset.json")
+                .save_file()
+            {
+                match app.to_preset().save(&path) {
+                    Ok(()) => {
+                        app.status = Some(format!("Saved preset {}", path.display()));
+                        app.error = None;
+                    }
+                    Err(e) => app.error = Some(format!("Could not save preset: {e}")),
+                }
+            }
+        }
+
+        let bundled = crate::app_preset::bundled();
+        if !bundled.is_empty() {
+            ui.separator();
+            for (name, path) in bundled {
+                if ui.button(&name).clicked() {
+                    ui.close();
+                    load_preset(app, &path, rs);
+                }
+            }
+        }
+    });
+}
+
+fn load_preset(app: &mut NtscrtApp, path: &std::path::Path, rs: Option<&RenderState>) {
+    let Some(rs) = rs else {
+        app.error = Some("No GPU context; cannot switch shaders".into());
+        return;
+    };
+    let name = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+    match crate::app_preset::AppPreset::load(path) {
+        Ok(preset) => match app.apply_preset(preset, &rs.device, &rs.queue) {
+            // Anything the preset asked for that couldn't be applied is
+            // surfaced rather than silently dropped.
+            Some(note) => {
+                app.status = Some(format!("Loaded '{name}' \u{2014} {note}"));
+                app.error = None;
+            }
+            None => {
+                app.status = Some(format!("Loaded preset '{name}'"));
+                app.error = None;
+            }
+        },
+        Err(e) => app.error = Some(format!("Could not load '{name}': {e}")),
+    }
 }
 
 fn pick_source(app: &mut NtscrtApp) {

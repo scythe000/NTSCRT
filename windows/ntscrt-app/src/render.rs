@@ -20,6 +20,10 @@ pub struct RenderSettings {
     /// ntsc-rs preset JSON. None keeps ntsc-rs defaults.
     pub ntsc_preset_json: Option<String>,
     pub shader_id: String,
+    /// Shader parameter overrides applied after the chain loads. Names the
+    /// shader doesn't expose are ignored — a preset written against a
+    /// different shader build shouldn't fail the whole render.
+    pub shader_params: Vec<(String, f32)>,
     pub output_height: u32,
     /// Round the output onto the scanline grid instead of supersampling.
     pub snap_to_scanline_grid: bool,
@@ -34,6 +38,7 @@ impl Default for RenderSettings {
             ntsc_enabled: true,
             ntsc_preset_json: None,
             shader_id: "royale".to_string(),
+            shader_params: Vec::new(),
             output_height: 960,
             snap_to_scanline_grid: false,
             frame_count: 0,
@@ -126,6 +131,10 @@ impl HeadlessRenderer {
             Some(self.adapter_info.clone()),
             self.pipeline_cache,
         )?;
+
+        for (name, value) in &settings.shader_params {
+            chain.set_parameter(name, *value);
+        }
 
         let downscale = settings.downscale_width.map(|w| {
             DownscaleSpec::for_width(w, source.width, source.height, settings.downscale_method)
@@ -222,6 +231,29 @@ impl HeadlessRenderer {
         };
         buffer.unmap();
         Ok((pixels, out_w, out_h))
+    }
+
+    /// Load a shader and report the parameters it declares, in order.
+    ///
+    /// Used by the verifier's `--list-params` to confirm a preset's metadata
+    /// reaches the UI (labels, ranges and steps drive the CRT panel's
+    /// controls, and the descriptions feed the hyllian gate rule).
+    pub fn shader_parameters(
+        &mut self,
+        shader_id: &str,
+    ) -> Result<Vec<crate::gpu::chain::ShaderParamMeta>, Box<dyn std::error::Error>> {
+        let entry = crate::presets::find(shader_id)
+            .ok_or_else(|| format!("unknown shader preset '{shader_id}'"))?;
+        let path = crate::presets::resolve(entry)
+            .ok_or_else(|| format!("shader '{}' not found", entry.relative_path))?;
+        let chain = ShaderChain::load(
+            &path,
+            &self.device,
+            &self.queue,
+            Some(self.adapter_info.clone()),
+            self.pipeline_cache,
+        )?;
+        Ok(chain.parameters().to_vec())
     }
 
     /// Render `source` and write the result to `dest` as a PNG.

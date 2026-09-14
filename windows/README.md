@@ -61,11 +61,19 @@ dependencies are optimised even in debug builds for the same reason.
 
 ## Using the app
 
-**Toolbar** — **Open** (Ctrl+O) an image, **Export PNG** (Ctrl+E), and the view
-controls. **Animate** runs the preview continuously so tape noise, jitter and
-interlacing actually move — leave it on for the real experience. **Compare**
-splits the preview: full pipeline left of the line, untouched source right;
-drag the line to move the split. Alt+scroll zooms.
+**Toolbar** — **Open** (Ctrl+O) an image, **Export PNG** (Ctrl+E), the
+**Preset** menu, and the view controls. **Animate** runs the preview
+continuously so tape noise, jitter and interlacing actually move — leave it on
+for the real experience. **Compare** splits the preview: full pipeline left of
+the line, untouched source right; drag the line to move the split. Alt+scroll
+zooms.
+
+**Presets** — save or load your entire configuration (downscale, NTSC, shader
+and every shader parameter) as JSON, with the 17 bundled presets listed
+underneath. The format is the macOS build's, so presets move between the two.
+Eight of the bundled presets carry keyframes; this build has no timeline, so
+it says so on load and **preserves them untouched when you save** rather than
+quietly dropping someone's animation.
 
 **Sidebar** — the creative pipeline, top to bottom in signal order:
 
@@ -101,14 +109,22 @@ rule of thumb, crisp scanlines want 3+ output rows per downscale line.
 # Render an image through the full pipeline
 .\target\release\ntscrt-smoke.exe input.png out.png --shader royale --downscale 320 --height 960
 
-# Check which shaders resolve on this machine
-.\target\release\ntscrt-smoke.exe --list-shaders
+# Render with a bundled app preset
+.\target\release\ntscrt-smoke.exe input.png out.png --preset "Medium VHS" --height 720
+
+# Inventory
+.\target\release\ntscrt-smoke.exe --list-shaders          # which shaders resolve here
+.\target\release\ntscrt-smoke.exe --list-presets          # bundled presets and what they set
+.\target\release\ntscrt-smoke.exe --list-params royale    # a shader's parameters, ranges and defaults
 ```
 
-`--shader`, `--downscale <px|off>`, `--method`, `--height`, `--snap`,
-`--no-ntsc`, `--ntsc-preset <file>`, `--frame <n>`. Useful for confirming a
-build renders correctly on a given adapter and for byte-comparing output
-across revisions.
+`--preset`, `--shader`, `--downscale <px|off>`, `--method`, `--height`,
+`--snap`, `--no-ntsc`, `--ntsc-preset <file>`, `--frame <n>`. Flags after
+`--preset` override it, so a preset works as a starting point.
+
+Useful for confirming a build renders correctly on a given adapter, for
+byte-comparing output across revisions, and — via `--list-params` — for
+checking that a shader's metadata reaches the UI.
 
 ## Asset locations
 
@@ -138,8 +154,12 @@ On an RTX 3090 (Vulkan backend):
 
 - All seven bundled CRT presets render.
 - All six downscale kernels produce distinct, correct output.
+- All 17 bundled app presets parse and render; "Clean CRT" and "Obliterated"
+  produce the crisp and destroyed looks their names promise.
+- Every rule in `param_gates.rs` names a parameter that exists in the real
+  shaders (checked against `--list-params` for all seven).
 - crt-royale, 320×240 → 1280×960, in 1.9s.
-- 40 tests pass (`cargo test --release`).
+- 46 tests pass (`cargo test --release`).
 
 The GUI launches and runs clean; its visual layout has not been checked against
 the macOS app side by side.

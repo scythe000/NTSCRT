@@ -26,8 +26,12 @@ ntscrt-smoke — headless NTSCRT pipeline verifier
 USAGE:
     ntscrt-smoke <input-image> <output.png> [options]
     ntscrt-smoke --list-shaders
+    ntscrt-smoke --list-params [shader-id]
+    ntscrt-smoke --list-presets
 
 OPTIONS:
+    --preset <name|file>  Load a full app preset (downscale + NTSC + shader).
+                          Bundled name or path; later flags still override it.
     --shader <id>         CRT preset id (default: royale). --list-shaders to see them.
     --downscale <px>      Retro width the shader sees (default: 320). 'off' disables.
     --method <name>       nearest | nearest+ | bilinear | bicubic | lanczos | area
@@ -49,6 +53,23 @@ fn main() -> ExitCode {
     }
 }
 
+/// Accept either a path to a preset file or the name of a bundled one.
+fn resolve_preset(name: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let direct = PathBuf::from(name);
+    if direct.is_file() {
+        return Ok(direct);
+    }
+    let bundled = ntscrt_app::app_preset::bundled();
+    bundled
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case(name))
+        .map(|(_, p)| p.clone())
+        .ok_or_else(|| {
+            let names: Vec<&str> = bundled.iter().map(|(n, _)| n.as_str()).collect();
+            format!("no preset '{name}'. Bundled: {}", names.join(", ")).into()
+        })
+}
+
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
@@ -60,6 +81,48 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         return Ok(());
     }
+    if args.iter().any(|a| a == "--list-presets") {
+        let found = ntscrt_app::app_preset::bundled();
+        if found.is_empty() {
+            return Err("no bundled presets found. Set NTSCRT_PRESETS to the presets/ \
+                        directory, or run from the repository."
+                .into());
+        }
+        println!("{} bundled presets", found.len());
+        for (name, path) in &found {
+            match ntscrt_app::app_preset::AppPreset::load(path) {
+                Ok(p) => println!(
+                    "  {:<24} shader={:<14} downscale={}px {:<10} ntsc={:<5} {}",
+                    name,
+                    p.shader.preset,
+                    p.downscale.width,
+                    p.downscale.method,
+                    p.ntsc.enabled,
+                    if p.has_keyframes() { "[has keyframes]" } else { "" }
+                ),
+                Err(e) => println!("  {name:<24} FAILED: {e}"),
+            }
+        }
+        return Ok(());
+    }
+
+    if let Some(i) = args.iter().position(|a| a == "--list-params") {
+        let shader = args.get(i + 1).map(String::as_str).unwrap_or("royale");
+        let mut renderer = HeadlessRenderer::new()?;
+        let params = renderer.shader_parameters(shader)?;
+        println!("{shader}: {} parameters", params.len());
+        for p in &params {
+            let kind = if p.is_toggle() {
+                "toggle".to_string()
+            } else if p.has_usable_range() {
+                format!("{} .. {} step {}", p.minimum, p.maximum, p.step)
+            } else {
+                "unbounded".to_string()
+            };
+            println!("  {:<34} {:<28} = {:<10} {}", p.name, kind, p.initial, p.description);
+        }
+        return Ok(());
+    }
     if args.is_empty() || args.iter().any(|a| a == "-h" || a == "--help") {
         print!("{USAGE}");
         return Ok(());
@@ -67,6 +130,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut positional: Vec<String> = Vec::new();
     let mut settings = RenderSettings::default();
+    let mut preset_params: Vec<(String, f32)> = Vec::new();
     let mut i = 0;
     while i < args.len() {
         let arg = &args[i];
@@ -94,6 +158,26 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let p = value("--ntsc-preset")?;
                 settings.ntsc_preset_json = Some(std::fs::read_to_string(p)?);
             }
+            // A full app preset drives downscale, NTSC and shader at once.
+            // Any flag given after it still wins, so a preset can be used as
+            // a starting point.
+            "--preset" => {
+                let name = value("--preset")?;
+                let path = resolve_preset(&name)?;
+                let p = ntscrt_app::app_preset::AppPreset::load(&path)?;
+                settings.downscale_width = p.downscale.enabled.then_some(p.downscale.width);
+                settings.downscale_method = DownscaleMethod::from_str(&p.downscale.method)
+                    .map_err(|_| format!("preset has unknown method '{}'", p.downscale.method))?;
+                settings.ntsc_enabled = p.ntsc.enabled;
+                if !p.ntsc.settings.is_null() {
+                    settings.ntsc_preset_json = Some(p.ntsc.settings.to_string());
+                }
+                settings.shader_id = p.shader.preset.clone();
+                if p.has_keyframes() {
+                    eprintln!("note: '{name}' carries keyframes; this build has no timeline");
+                }
+                preset_params = p.shader.params.into_iter().collect();
+            }
             other if other.starts_with("--") => {
                 return Err(format!("unknown option '{other}'\n\n{USAGE}").into());
             }
@@ -107,6 +191,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let input = PathBuf::from(&positional[0]);
     let output = PathBuf::from(&positional[1]);
+
+    settings.shader_params = preset_params;
 
     let source = SourceImage::load(&input)
         .map_err(|e| format!("could not read {}: {e}", input.display()))?;

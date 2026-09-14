@@ -5,6 +5,7 @@
 //! `crt-smoke` target) drive exactly the same code.
 
 pub mod app;
+pub mod app_preset;
 pub mod gpu;
 pub mod image_io;
 pub mod param_gates;
