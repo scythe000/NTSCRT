@@ -43,6 +43,10 @@ last are facts about the shaders, not about the platform.
   nothing extra; HEIC and AVIF stills are decoded through ffmpeg too (HEIC
   needs 7.1 or newer).
 
+Nothing else: no runtime to install. The C++ runtime is linked into the
+executable, so the zip runs on a clean Windows install; stills work with no
+ffmpeg at all.
+
 Building additionally needs:
 
 - [Rust](https://rustup.rs/) (stable, `x86_64-pc-windows-msvc`)
@@ -54,6 +58,14 @@ Download `NTSCRT-<version>-windows-x64.zip` from the
 [releases](https://github.com/scythe000/NTSCRT/releases), unzip it anywhere,
 run `ntscrt.exe`. The folder is self-contained — `shaders/` and `presets/`
 sit beside the executable — apart from ffmpeg, which you install yourself.
+
+The zip holds two programs. `ntscrt.exe` is the app. `ntscrt-smoke.exe` is
+a command-line tool that runs the same pipeline without a window — it
+renders a file with a shader or preset, lists the bundled shaders, presets
+and parameters, and reports on a video — which is how the build checks
+itself (the packaging step runs it) and how a look can be reproduced
+exactly for a bug report. You never need it to use the app; see
+[Headless verifier](#headless-verifier) if you want it.
 
 ## Build
 
@@ -118,7 +130,11 @@ tracking error, and frozen on one frame a preset shows you a still that
 happens to be noisy rather than the effect it is for. The format is the
 macOS build's, so presets move between the two. Loading a keyframed preset
 opens the timeline and starts it playing, as on macOS, so the animation is
-what you see rather than one frame of it.
+what you see rather than one frame of it. A preset is a clean slate: every
+setting it covers goes to the preset's value or, where the preset is
+silent, to the default — nothing from the previous preset or from your own
+tweaks carries over, and on a video the switch shows immediately rather
+than after the cached frames run out.
 
 **Sidebar** — the creative pipeline, top to bottom in signal order:
 

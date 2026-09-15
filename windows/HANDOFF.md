@@ -73,6 +73,9 @@ counterpart in its header comment. Port *behaviour*, not frameworks.
 | Export sized by long edge | ✅ `export_output_size` unit-tested + panel shows it |
 | HEIC / AVIF stills via ffmpeg | ✅ smoke-rendered with ffmpeg 7.0 (HEIC) and 6.1 (AVIF) |
 | Edits while parked on a keyframe rewrite that key | ✅ on screen |
+| Preview pacing (timeline at its fps, Animate at 30) | ✅ on screen: readout advances 0.5 s per 0.5 s |
+| Preset load is a clean slate, incl. on a playing video | ✅ on screen: Glitch 1 → Clean VHS mid-playback |
+| No VC++ Redistributable needed (crt-static) | ⏳ CI check in `package.ps1`; confirm with `objdump -p` on the artifact |
 
 **159 tests, zero warnings.** 54 in `ntscrt-core`, 105 in `ntscrt-app`.
 
@@ -432,6 +435,20 @@ A copied track is cut at packet granularity, so it can run one audio frame
 (~23 ms for AAC) past the last picture frame; a re-encoded one is exact.
 On cancel ffmpeg is killed rather than allowed to finish the audio.
 
+### A preset load is a clean slate
+
+`apply_preset` ends with `mark_chain_input_edited`, not `mark_dirty`. The
+difference only shows on a video: the playback producer holds a settings
+snapshot and a per-frame keyframe closure, and the cache holds frames with
+the NTSC stage baked in, so a plain dirty flag left the *previous* preset
+playing back until the cache ran out or the next edit pushed a config. The
+Mac's `loadLook` calls `noteChainInputEdited()` for the same reason. Shader
+parameters the preset doesn't name go to their defaults first (the target
+shader's stash is dropped; a same-shader load resets before applying), and
+the bar follows the preset's `timeline.enabled`, forced open when keyed.
+`load_preset` sets `active_preset` *after* applying, because the edit hooks
+clear it.
+
 ### The whole shader tree ships
 
 The seven `.slangp` files reference a few dozen `.slang` files, but those
@@ -467,6 +484,19 @@ and its `#include`s in order, first occurrence wins, unreadable files are
 skipped (it only decides ordering; the loader reports real problems). The
 Hyllian test (`hyllian_headers_precede_their_sections`) runs against the real
 checkout and is skipped without one.
+
+### The C++ runtime is linked statically
+
+`.cargo/config.toml` sets `crt-static` for `x86_64-pc-windows-msvc`. Without
+it the exe imports `MSVCP140.dll` / `VCRUNTIME140.dll` / `VCRUNTIME140_1.dll`
+(librashader's glslang and spirv-cross bindings are C++), which is the
+Visual C++ Redistributable — installed on most PCs by something else, absent
+on a clean one, and the app dies on launch with a "missing DLL" dialog.
+`package.ps1` byte-searches both exes for those names and refuses to zip if
+they appear. To check an artifact from Linux: `objdump -p ntscrt.exe | grep
+"DLL Name"` — the `api-ms-win-crt-*` entries are the UCRT and are fine (part
+of Windows 10). This was found by inspecting the CI artifact; the setting
+was not verified on a clean Windows install.
 
 ### The icon is generated, not committed
 
