@@ -50,9 +50,9 @@ pub struct GradeParam {
 /// 8. invert
 pub const GRADE_PARAMS: &[GradeParam] = &[
     GradeParam { name: "hue_shift", label: "Hue shift", minimum: -180.0, maximum: 180.0, default: 0.0, step: 1.0 },
-    GradeParam { name: "keep", label: "Colour highlight", minimum: 0.0, maximum: 1.0, default: 0.0, step: 0.01 },
-    GradeParam { name: "keep_hue", label: "Highlight hue", minimum: 0.0, maximum: 360.0, default: 0.0, step: 1.0 },
-    GradeParam { name: "keep_width", label: "Highlight width", minimum: 5.0, maximum: 180.0, default: 30.0, step: 1.0 },
+    GradeParam { name: "keep", label: "Keep colour", minimum: 0.0, maximum: 1.0, default: 0.0, step: 0.01 },
+    GradeParam { name: "keep_hue", label: "Kept hue", minimum: 0.0, maximum: 360.0, default: 20.0, step: 1.0 },
+    GradeParam { name: "keep_width", label: "Hue width", minimum: 5.0, maximum: 180.0, default: 30.0, step: 1.0 },
     GradeParam { name: "saturation", label: "Saturation", minimum: 0.0, maximum: 2.0, default: 1.0, step: 0.01 },
     GradeParam { name: "contrast", label: "Contrast", minimum: 0.0, maximum: 2.0, default: 1.0, step: 0.01 },
     GradeParam { name: "brightness", label: "Brightness", minimum: -1.0, maximum: 1.0, default: 0.0, step: 0.01 },

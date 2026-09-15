@@ -6,6 +6,7 @@
 //! for SwiftUI's.
 
 mod downscale_panel;
+mod grade_panel;
 mod ntsc_panel;
 mod preview_panel;
 mod shader_panel;
@@ -395,6 +396,8 @@ pub fn sidebar(app: &mut NtscrtApp, root: &mut egui::Ui, rs: Option<&RenderState
                 downscale_panel::show(app, ui);
                 ui.separator();
                 ntsc_panel::show(app, ui);
+                ui.separator();
+                grade_panel::show(app, ui);
                 ui.separator();
                 shader_panel::show(app, ui, rs);
                 ui.separator();
