@@ -9,6 +9,10 @@ as the macOS app —
 your image → NTSC/VHS signal degradation (full res) → downscale to retro resolution → CRT shader → screen
 ```
 
+> **Picking this up?** [HANDOFF.md](HANDOFF.md) has the current state, the
+> decisions that aren't obvious from the code, and the API traps (egui 0.36,
+> wgpu 30, librashader 0.12) that will otherwise cost you an hour each.
+
 ## Why this is a rewrite, not a port
 
 The two projects doing the actual image work are already cross-platform Rust,
