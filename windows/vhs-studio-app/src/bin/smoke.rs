@@ -38,6 +38,8 @@ USAGE:
 OPTIONS:
     --preset <name|file>  Load a full app preset (downscale + NTSC + shader).
                           Bundled name or path; later flags still override it.
+                          Repeatable: a colour preset such as Neon stacks its
+                          grade on the preset before it, as in the app's menu.
     --shader <id>         CRT preset id (default: royale). --list-shaders to see them.
     --downscale <px>      Retro width the shader sees (default: 320). 'off' disables.
     --method <name>       nearest | nearest+ | bilinear | bicubic | lanczos | area
@@ -359,7 +361,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     p.downscale.width,
                     p.downscale.method,
                     p.ntsc.enabled,
-                    if p.has_keyframes() { "[has keyframes]" } else { "" }
+                    if p.is_colour_layer() {
+                        "[colour, stacks]"
+                    } else if p.has_keyframes() {
+                        "[has keyframes]"
+                    } else {
+                        ""
+                    }
                 ),
                 Err(e) => println!("  {name:<24} FAILED: {e}"),
             }
@@ -507,6 +515,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let name = value("--preset")?;
                 let path = resolve_preset(&name)?;
                 let p = vhs_studio_app::app_preset::AppPreset::load(&path)?;
+                // A colour preset is only its grade; it stacks on whatever
+                // --preset came before it, as it does in the app's menu.
+                if p.is_colour_layer() {
+                    println!("colour preset '{name}' stacked (grade only)");
+                    settings.grade = p.grade.clone();
+                    i += 1;
+                    continue;
+                }
                 settings.downscale_width = p.downscale.enabled.then_some(p.downscale.width);
                 settings.downscale_method = DownscaleMethod::from_str(&p.downscale.method)
                     .map_err(|_| format!("preset has unknown method '{}'", p.downscale.method))?;

@@ -289,8 +289,12 @@ fn export_control(app: &mut VhsStudioApp, ui: &mut egui::Ui) {
     }
 }
 
-/// Preset menu: save/load the whole configuration, plus the bundled presets
-/// listed underneath — the same arrangement as the macOS toolbar.
+/// Preset menu: save/load the whole configuration, then the bundled
+/// presets in three sections. **Looks** and **Animated** are whole
+/// snapshots — one at a time, the tick marks the one on screen. **Colour**
+/// presets are grade-only and stack on top of either: their tick is a
+/// checkbox, so picking one lays it over the current look, picking it again
+/// takes it off, and switching the look underneath keeps it.
 fn preset_menu(app: &mut VhsStudioApp, ui: &mut egui::Ui, rs: Option<&RenderState>) {
     ui.menu_button("Preset", |ui| {
         if ui.button("Load\u{2026}").clicked() {
@@ -310,64 +314,133 @@ fn preset_menu(app: &mut VhsStudioApp, ui: &mut egui::Ui, rs: Option<&RenderStat
                 .set_file_name("My preset.json")
                 .save_file()
             {
-                match app.to_preset().save(&path) {
-                    Ok(()) => {
-                        app.status = Some(format!("Saved preset {}", path.display()));
-                        app.error = None;
-                    }
-                    Err(e) => app.error = Some(format!("Could not save preset: {e}")),
-                }
+                save_preset(app, app.to_preset(), &path);
+            }
+        }
+        if ui
+            .button("Save colour as\u{2026}")
+            .on_hover_text(
+                "Save just the Colour panel as a stackable colour preset. The file also \
+                 carries the rest of the current look, so older builds load it whole.",
+            )
+            .clicked()
+        {
+            ui.close();
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("VHS-Studio preset", &["json"])
+                .set_file_name("My colour.json")
+                .save_file()
+            {
+                let mut preset = app.to_preset();
+                preset.layer = Some(crate::app_preset::PresetLayer::Colour);
+                save_preset(app, preset, &path);
             }
         }
 
-        let bundled = crate::app_preset::bundled();
-        if !bundled.is_empty() {
+        use crate::app_preset::PresetKind;
+        let bundled = app.bundled_presets.clone();
+        let mut section = |ui: &mut egui::Ui, kind: PresetKind, title: &str, hint: &str| {
+            let items: Vec<_> = bundled.iter().filter(|b| b.kind == kind).collect();
+            if items.is_empty() {
+                return;
+            }
             ui.separator();
-            for (name, path) in bundled {
+            ui.label(egui::RichText::new(title).small().weak()).on_hover_text(hint);
+            for b in items {
                 // A tick marks the loaded preset. It clears the moment any
                 // setting the preset controls is edited, so it never claims
                 // a look you have since changed.
-                let active = app.active_preset.as_deref() == Some(name.as_str());
-                let label = if active {
-                    format!("\u{2713} {name}")
+                //
+                // Looks are a radio group — one on screen at a time. Colour
+                // presets are checkboxes: ticked means stacked on top.
+                let clicked = if kind == PresetKind::Colour {
+                    let mut on = app.active_colour_preset() == Some(b.name.as_str());
+                    ui.checkbox(&mut on, &b.name).clicked()
                 } else {
-                    format!("   {name}")
+                    let on = app.active_preset.as_deref() == Some(b.name.as_str());
+                    ui.radio(on, &b.name).clicked()
                 };
-                if ui.button(label).clicked() {
+                if clicked {
                     ui.close();
-                    load_preset(app, &path, rs);
+                    if kind == PresetKind::Colour && app.active_colour_preset() == Some(b.name.as_str()) {
+                        app.remove_colour_layer();
+                        app.status = Some(format!("Removed colour '{}'", b.name));
+                        app.error = None;
+                    } else {
+                        load_preset(app, &b.path, rs);
+                    }
                 }
             }
-        }
+        };
+        section(ui, PresetKind::Look, "Looks", "A whole look. Loading one replaces the look on screen.");
+        section(
+            ui,
+            PresetKind::Animated,
+            "Animated",
+            "A whole look with keyframes. Loading one replaces the look on screen and opens the timeline.",
+        );
+        section(
+            ui,
+            PresetKind::Colour,
+            "Colour \u{2014} stacks on any look",
+            "Only the Colour panel. Pick one to lay it over the current look; pick it again to take it off. \
+             Switching the look underneath keeps it.",
+        );
     });
 }
 
+fn save_preset(app: &mut VhsStudioApp, preset: crate::app_preset::AppPreset, path: &std::path::Path) {
+    match preset.save(path) {
+        Ok(()) => {
+            app.status = Some(format!("Saved preset {}", path.display()));
+            app.error = None;
+        }
+        Err(e) => app.error = Some(format!("Could not save preset: {e}")),
+    }
+}
+
 fn load_preset(app: &mut VhsStudioApp, path: &std::path::Path, rs: Option<&RenderState>) {
+    let name = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+    let preset = match crate::app_preset::AppPreset::load(path) {
+        Ok(p) => p,
+        Err(e) => {
+            app.error = Some(format!("Could not load '{name}': {e}"));
+            return;
+        }
+    };
+
+    // A colour preset touches only the grade, so it needs no GPU context
+    // and leaves the base look's tick alone.
+    if preset.is_colour_layer() {
+        app.apply_colour_preset(&name, &preset);
+        app.status = Some(match &app.active_preset {
+            Some(base) => format!("Colour '{name}' over '{base}'"),
+            None => format!("Colour '{name}' applied"),
+        });
+        app.error = None;
+        return;
+    }
+
     let Some(rs) = rs else {
         app.error = Some("No GPU context; cannot switch shaders".into());
         return;
     };
-    let name = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
-    match crate::app_preset::AppPreset::load(path) {
-        Ok(preset) => {
-            let note = app.apply_preset(preset, &rs.device, &rs.queue);
-            // Set after applying: apply_preset routes through the same edit
-            // hooks the panels use, which clear the tick.
-            app.active_preset = Some(name.clone());
-            match note {
-            // Anything the preset asked for that couldn't be applied is
-            // surfaced rather than silently dropped.
-            Some(note) => {
-                app.status = Some(format!("Loaded '{name}' \u{2014} {note}"));
-                app.error = None;
-            }
-            None => {
-                app.status = Some(format!("Loaded preset '{name}'"));
-                app.error = None;
-            }
-            }
+    let note = app.apply_preset(preset, &rs.device, &rs.queue);
+    // Set after applying: apply_preset routes through the same edit
+    // hooks the panels use, which clear the tick.
+    app.active_preset = Some(name.clone());
+    let colour = app.active_colour_preset().map(|c| format!(" with colour '{c}'")).unwrap_or_default();
+    match note {
+        // Anything the preset asked for that couldn't be applied is
+        // surfaced rather than silently dropped.
+        Some(note) => {
+            app.status = Some(format!("Loaded '{name}'{colour} \u{2014} {note}"));
+            app.error = None;
         }
-        Err(e) => app.error = Some(format!("Could not load '{name}': {e}")),
+        None => {
+            app.status = Some(format!("Loaded preset '{name}'{colour}"));
+            app.error = None;
+        }
     }
 }
 

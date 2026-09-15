@@ -21,6 +21,7 @@
       "tint_shadow_r": 0.02
     }
   },
+  "layer": "colour",
   "ntsc": {
     "enabled": true,
     "settings": {

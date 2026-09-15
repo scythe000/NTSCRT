@@ -13,6 +13,7 @@
       "solarize_threshold": 0.5
     }
   },
+  "layer": "colour",
   "ntsc": {
     "enabled": true,
     "settings": {

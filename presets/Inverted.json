@@ -11,6 +11,7 @@
       "invert": 1.0
     }
   },
+  "layer": "colour",
   "ntsc": {
     "enabled": true,
     "settings": {

@@ -12,6 +12,7 @@
       "saturation": 0.0
     }
   },
+  "layer": "colour",
   "ntsc": {
     "enabled": true,
     "settings": {

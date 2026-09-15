@@ -115,6 +115,13 @@ pub struct VhsStudioApp {
     /// Cleared as soon as any setting it controls is edited — a tick that
     /// survives edits would claim the preset is still what you are seeing.
     pub active_preset: Option<String>,
+    /// The colour preset stacked on top, if any — its name for the menu
+    /// tick and its grade, so a later base-preset load can keep it in
+    /// place. Cleared when a grade control is edited by hand.
+    pub colour_layer: Option<(String, vhs_studio_core::Grade)>,
+    /// The bundled presets, read and classified once at start-up; the menu
+    /// draws from this rather than re-reading the files every frame.
+    pub bundled_presets: Vec<crate::app_preset::BundledPreset>,
     /// Frames of VHS motion to write when exporting a *still* as video.
     /// None keeps the still export a PNG, as it has always been.
     pub export_still_frames: Option<u32>,
@@ -199,6 +206,8 @@ impl VhsStudioApp {
             export_task: None,
             load_task: None,
             active_preset: None,
+            colour_layer: None,
+            bundled_presets: crate::app_preset::bundled_classified(),
             export_still_frames: None,
             pipeline,
             preview_texture: None,
@@ -297,6 +306,41 @@ impl VhsStudioApp {
     /// no longer describes what is on screen.
     pub fn leave_preset(&mut self) {
         self.active_preset = None;
+    }
+
+    /// A grade control was edited by hand. If a colour preset is stacked
+    /// on top, that is what no longer describes the screen — the base
+    /// look underneath is untouched, so its tick stays. With no colour
+    /// layer the grade belongs to the base preset, and its tick goes.
+    pub fn leave_grade(&mut self) {
+        if self.colour_layer.take().is_none() {
+            self.active_preset = None;
+        }
+    }
+
+    /// Name of the stacked colour preset, for the menu tick.
+    pub fn active_colour_preset(&self) -> Option<&str> {
+        self.colour_layer.as_ref().map(|(n, _)| n.as_str())
+    }
+
+    /// Stack a colour preset on whatever is on screen: only its grade
+    /// section is applied, nothing else in the file is touched. The base
+    /// preset's tick stays — that look is still what is underneath.
+    pub fn apply_colour_preset(&mut self, name: &str, preset: &crate::app_preset::AppPreset) {
+        self.grade = preset.grade.clone();
+        self.colour_layer = Some((name.to_string(), preset.grade.clone()));
+        self.mark_dirty();
+        self.auto_key_if_parked();
+    }
+
+    /// Take the stacked colour preset off again: the grade goes back to
+    /// off, which is what every bundled base look carries.
+    pub fn remove_colour_layer(&mut self) {
+        if self.colour_layer.take().is_some() {
+            self.grade = vhs_studio_core::Grade::default();
+            self.mark_dirty();
+            self.auto_key_if_parked();
+        }
     }
 
     pub fn mark_dirty(&mut self) {
@@ -406,14 +450,14 @@ impl VhsStudioApp {
     /// grade runs on the cached chain input, not before it.
     pub fn set_grade_param(&mut self, name: &str, value: f32) {
         self.grade.set(name, value);
-        self.leave_preset();
+        self.leave_grade();
         self.mark_dirty();
     }
 
     pub fn set_grade_enabled(&mut self, on: bool) {
         if self.grade.enabled != on {
             self.grade.enabled = on;
-            self.leave_preset();
+            self.leave_grade();
             self.mark_dirty();
         }
     }
@@ -421,7 +465,7 @@ impl VhsStudioApp {
     /// Every grade control back to its default; the switch stays as it is.
     pub fn reset_grade(&mut self) {
         self.grade.reset();
-        self.leave_preset();
+        self.leave_grade();
         self.mark_dirty();
         self.auto_key_if_parked();
     }
@@ -717,6 +761,7 @@ impl VhsStudioApp {
             rotation: self.rotation,
             timeline: self.timeline.clone(),
             grade: self.grade.clone(),
+            layer: None,
         }
     }
 
@@ -794,8 +839,19 @@ impl VhsStudioApp {
 
         // Presets from before the stage carry no grade section and load with
         // it off — the default — which is the clean slate the rest of this
-        // function promises.
-        self.grade = preset.grade.clone();
+        // function promises. The one thing allowed to show through is a
+        // colour preset the user has stacked on top: it is ticked in the
+        // menu, so it is not a remnant, and a base look that says nothing
+        // about colour keeps it. A base that *does* carry a grade of its
+        // own is explicit about its colour and takes the layer off.
+        let base_has_colour = preset.grade != vhs_studio_core::Grade::default();
+        match (&self.colour_layer, base_has_colour) {
+            (Some((_, layer)), false) => self.grade = layer.clone(),
+            _ => {
+                self.colour_layer = None;
+                self.grade = preset.grade.clone();
+            }
+        }
 
         // Every preset animates on load, whatever its own `view.animate`
         // says. These looks are built out of tape noise, jitter and

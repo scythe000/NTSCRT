@@ -44,10 +44,69 @@ pub struct AppPreset {
     /// anything the macOS build writes; both load with the stage off.
     #[serde(default, skip_serializing_if = "grade_is_default")]
     pub grade: vhs_studio_core::Grade,
+    /// What part of the look this preset is *about*. Absent (the default,
+    /// and everything the macOS build writes) means the whole thing: a
+    /// full snapshot that loads as a clean slate. `colour` marks a preset
+    /// that is only its grade section — the rest of the file is the base
+    /// it was built on, kept so older builds still load it whole — and
+    /// loads as a layer over whatever is on screen. See
+    /// [`crate::app::VhsStudioApp::apply_colour_preset`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<PresetLayer>,
+}
+
+/// See [`AppPreset::layer`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PresetLayer {
+    Colour,
+}
+
+impl AppPreset {
+    pub fn is_colour_layer(&self) -> bool {
+        self.layer == Some(PresetLayer::Colour)
+    }
 }
 
 fn grade_is_default(g: &vhs_studio_core::Grade) -> bool {
     *g == vhs_studio_core::Grade::default()
+}
+
+/// How the Preset menu files a bundled preset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PresetKind {
+    /// A whole look: downscale, signal stage, shader. One at a time.
+    Look,
+    /// A whole look that also carries keyframes. One at a time, with Looks.
+    Animated,
+    /// A colour grade only; stacks on either of the above.
+    Colour,
+}
+
+/// A bundled preset with what the menu needs to know without re-reading
+/// the file every frame the menu is open.
+#[derive(Debug, Clone)]
+pub struct BundledPreset {
+    pub name: String,
+    pub path: std::path::PathBuf,
+    pub kind: PresetKind,
+}
+
+/// [`bundled`] with each file read once and classified. Files that don't
+/// parse are listed as Looks so the menu still shows them and the load
+/// error surfaces when they are picked.
+pub fn bundled_classified() -> Vec<BundledPreset> {
+    bundled()
+        .into_iter()
+        .map(|(name, path)| {
+            let kind = match AppPreset::load(&path) {
+                Ok(p) if p.is_colour_layer() => PresetKind::Colour,
+                Ok(p) if p.has_keyframes() => PresetKind::Animated,
+                _ => PresetKind::Look,
+            };
+            BundledPreset { name, path, kind }
+        })
+        .collect()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -165,6 +224,7 @@ mod tests {
             view: ViewSection::default(),
             rotation: vhs_studio_core::Rotation::None,
             grade: vhs_studio_core::Grade::default(),
+            layer: None,
             timeline: Some(vhs_studio_core::Timeline {
                 duration: 2.0,
                 fps: 30.0,
@@ -261,6 +321,40 @@ mod tests {
         assert!(!plain.contains("\"grade\""));
         let back: AppPreset = serde_json::from_str(&plain).unwrap();
         assert!(!back.grade.enabled);
+    }
+
+    #[test]
+    fn layer_round_trips_and_is_absent_for_a_whole_preset() {
+        let plain = serde_json::to_string(&sample()).unwrap();
+        assert!(!plain.contains("\"layer\""));
+        let back: AppPreset = serde_json::from_str(&plain).unwrap();
+        assert!(!back.is_colour_layer());
+
+        let mut p = sample();
+        p.layer = Some(PresetLayer::Colour);
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("\"layer\":\"colour\""));
+        let back: AppPreset = serde_json::from_str(&json).unwrap();
+        assert!(back.is_colour_layer());
+    }
+
+    #[test]
+    fn the_menu_files_the_bundled_presets_into_three_sections() {
+        let found = bundled_classified();
+        if found.is_empty() {
+            return;
+        }
+        let kind = |n: &str| found.iter().find(|b| b.name == n).map(|b| b.kind);
+        assert_eq!(kind("Mild VHS"), Some(PresetKind::Look));
+        assert_eq!(kind("Very wavy"), Some(PresetKind::Animated));
+        assert_eq!(kind("Neon"), Some(PresetKind::Colour));
+        assert_eq!(kind("Black & white"), Some(PresetKind::Colour));
+        // Every colour preset actually turns the grade on — a colour that
+        // changes nothing would tick and do nothing.
+        for b in found.iter().filter(|b| b.kind == PresetKind::Colour) {
+            let p = AppPreset::load(&b.path).unwrap();
+            assert!(p.grade.enabled, "{} is a colour preset with the grade off", b.name);
+        }
     }
 
     #[test]

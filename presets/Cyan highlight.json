@@ -13,6 +13,7 @@
       "keep_width": 40.0
     }
   },
+  "layer": "colour",
   "ntsc": {
     "enabled": true,
     "settings": {
