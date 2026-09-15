@@ -31,6 +31,9 @@ pub struct RenderRequest<'a> {
     pub downscale: Option<DownscaleSpec>,
     /// None leaves the signal clean (the NTSC panel switched off).
     pub ntsc_enabled: bool,
+    /// Off bypasses the CRT shader: the chain input is scaled to the output
+    /// with nearest sampling instead, showing the signal stage on its own.
+    pub shader_enabled: bool,
     /// Drives ntsc-rs's deterministic RNG and the shaders' animation uniforms.
     pub frame_count: usize,
     /// Identifies the source contents so the NTSC stage can skip re-copying
@@ -217,6 +220,21 @@ impl Pipeline {
         };
         self.last_chain_input = Some(chain_input.clone());
         let chain_input = &chain_input;
+
+        if !request.shader_enabled {
+            // Shader off: show the chain input as it is, each retro pixel a
+            // hard block, which is what the Mac's blit does too. The output
+            // target is always [`WORK_FORMAT`] with storage usage — the
+            // supersample path below writes to it the same way.
+            let view = chain_input.create_view(&Default::default());
+            self.downscaler.encode(
+                device, encoder,
+                &view, chain_size,
+                output_view, request.output_size,
+                ntscrt_core::DownscaleMethod::Nearest,
+            );
+            return Ok(());
+        }
 
         // ---- CRT shader ----
         // CRT shaders draw scanlines in *output* pixels. When the output

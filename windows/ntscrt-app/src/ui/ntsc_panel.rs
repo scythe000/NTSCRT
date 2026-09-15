@@ -36,31 +36,22 @@ pub fn show(app: &mut NtscrtApp, ui: &mut egui::Ui) {
                         Err(e) => app.error = Some(format!("{e}")),
                     }
                 }
-                if ui.button("Paste preset").clicked() {
-                    // egui cannot read the clipboard directly; load from a
-                    // file instead, which also covers the bundled presets.
-                    if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("ntsc-rs preset", &["json"])
-                        .set_directory(
-                            crate::presets::app_presets_dir().unwrap_or_else(|| ".".into()),
-                        )
-                        .pick_file()
-                    {
-                        match std::fs::read_to_string(&path)
-                            .map_err(|e| format!("{e}"))
-                            .and_then(|j| app.ntsc.set_settings_json(&j).map_err(|e| format!("{e}")))
-                        {
-                            Ok(()) => {
-                                app.status = Some(format!(
-                                    "Loaded preset {}",
-                                    path.file_name().unwrap_or_default().to_string_lossy()
-                                ));
-                                app.mark_chain_input_edited();
-                            }
-                            Err(e) => app.error = Some(format!("Preset failed to load: {e}")),
-                        }
-                    }
+                if ui
+                    .button("Paste preset")
+                    .on_hover_text("Apply ntsc-rs preset JSON from the clipboard.")
+                    .clicked()
+                {
+                    paste_preset(app);
                 }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .small_button("Reset")
+                        .on_hover_text("Every setting back to the house look the app opens on.")
+                        .clicked()
+                    {
+                        app.reset_ntsc();
+                    }
+                });
             });
 
             ui.add_enabled_ui(app.ntsc_enabled, |ui| {
@@ -181,5 +172,34 @@ fn set(
         app.error = Some(format!("{}: {e}", desc.label));
     } else {
         app.mark_chain_input_edited();
+        app.auto_key_if_parked();
+    }
+}
+
+/// Read ntsc-rs preset JSON off the clipboard and apply it — the ntsc-rs
+/// desktop app's own "copy preset" lands here directly, as it does on the
+/// Mac. The clipboard is opened per click rather than held: on Windows an
+/// open clipboard handle blocks every other app's paste.
+fn paste_preset(app: &mut NtscrtApp) {
+    let text = arboard::Clipboard::new()
+        .and_then(|mut c| c.get_text())
+        .map_err(|e| format!("clipboard: {e}"));
+    let result = text.and_then(|json| {
+        if json.trim().is_empty() {
+            return Err("the clipboard is empty".to_string());
+        }
+        app.ntsc.set_settings_json(&json).map_err(|e| format!("{e}"))
+    });
+    match result {
+        Ok(()) => {
+            app.status = Some("Pasted ntsc-rs preset".to_string());
+            app.mark_chain_input_edited();
+            app.auto_key_if_parked();
+        }
+        Err(e) => {
+            app.error = Some(format!(
+                "Paste failed: {e}. Copy a preset from ntsc-rs (or this app's Copy preset) first."
+            ));
+        }
     }
 }

@@ -8,7 +8,7 @@
 //!
 //! ```text
 //! ntscrt-smoke <input> <output.png> [--shader royale] [--downscale 320]
-//!              [--method area] [--height 960] [--no-ntsc] [--snap]
+//!              [--method area] [--height 960] [--no-ntsc] [--no-shader] [--snap]
 //!              [--ntsc-preset preset.json] [--frame N] [--list-shaders]
 //! ```
 
@@ -42,6 +42,7 @@ OPTIONS:
     --snap                Snap output onto the scanline grid instead of supersampling.
     --rotate <deg>        Rotate the source before the pipeline: 0, 90, 180, 270.
     --no-ntsc             Skip the NTSC/VHS signal stage.
+    --no-shader           Skip the CRT shader: write the chain input, nearest-scaled.
     --ntsc-preset <file>  ntsc-rs preset JSON (interchangeable with the ntsc-rs app).
     --frame <n>           Frame index: the deterministic RNG's seed, and which
                           frame is decoded when the input is a video (default: 0).
@@ -439,6 +440,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 };
             }
             "--no-ntsc" => settings.ntsc_enabled = false,
+            "--no-shader" => settings.shader_enabled = false,
             "--downscale" => {
                 let v = value("--downscale")?;
                 settings.downscale_width =
@@ -464,6 +466,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 settings.downscale_method = DownscaleMethod::from_str(&p.downscale.method)
                     .map_err(|_| format!("preset has unknown method '{}'", p.downscale.method))?;
                 settings.ntsc_enabled = p.ntsc.enabled;
+                settings.shader_enabled = p.shader.enabled;
                 if !p.ntsc.settings.is_null() {
                     settings.ntsc_preset_json = Some(p.ntsc.settings.to_string());
                 }

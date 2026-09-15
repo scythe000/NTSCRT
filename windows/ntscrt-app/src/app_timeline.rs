@@ -193,6 +193,38 @@ impl NtscrtApp {
         self.mark_chain_input_edited();
     }
 
+    /// A user edit landed while the playhead sits exactly on a keyframe:
+    /// rewrite that keyframe with the live values — the After Effects /
+    /// Premiere behaviour, so tweaking a look you jumped to isn't discarded
+    /// by the next scrub. Only for an exact hit: anywhere else the live
+    /// values are interpolated, and baking those into a key would drag it
+    /// toward its neighbour. Never fires while previewing, since then the
+    /// values on screen are the evaluator's, not the user's.
+    ///
+    /// The panels call this after their own edits; programmatic writes
+    /// (scrubbing, preset load) don't.
+    pub fn auto_key_if_parked(&mut self) {
+        if !self.timeline_open || self.timeline_playing || self.export_task.is_some() {
+            return;
+        }
+        if self.video.as_ref().is_some_and(|v| v.playing) {
+            return;
+        }
+        let Some(i) = self.keyframe_at_playhead() else { return };
+        let ntsc = self
+            .ntsc
+            .settings_json()
+            .ok()
+            .and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok())
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default();
+        let shader: BTreeMap<String, f32> =
+            self.shader_params.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let tl = self.timeline_mut();
+        tl.keys[i].ntsc = ntsc;
+        tl.keys[i].shader = shader;
+    }
+
     /// Index of the keyframe under the playhead, if any.
     pub fn keyframe_at_playhead(&self) -> Option<usize> {
         self.timeline_keys()

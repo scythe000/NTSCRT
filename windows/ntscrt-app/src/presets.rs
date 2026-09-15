@@ -30,6 +30,24 @@ pub fn find(id: &str) -> Option<&'static PresetEntry> {
     ALL.iter().find(|p| p.id == id)
 }
 
+/// House tweaks to a shader's declared parameter defaults, per shader id —
+/// the same values as `AppState.appShaderDefaults` in the macOS build. These
+/// are what a freshly selected shader opens on and what its Reset returns to.
+pub const HOUSE_SHADER_DEFAULTS: &[(&str, &[(&str, f32)])] = &[
+    ("glow_gauss",   &[("BOOST", 1.1), ("GLOW_ROLLOFF", 2.4), ("BLOOM_STRENGTH", 0.1)]),
+    ("glow_lanczos", &[("BOOST", 1.1), ("GLOW_ROLLOFF", 2.4), ("BLOOM_STRENGTH", 0.1)]),
+];
+
+/// The house default for one parameter of one shader, if the app overrides
+/// what the shader declares.
+pub fn house_shader_default(shader_id: &str, param: &str) -> Option<f32> {
+    HOUSE_SHADER_DEFAULTS
+        .iter()
+        .find(|(id, _)| *id == shader_id)
+        .and_then(|(_, params)| params.iter().find(|(name, _)| *name == param))
+        .map(|(_, v)| *v)
+}
+
 /// Root of the slang-shaders tree.
 ///
 /// `NTSCRT_SHADERS` overrides everything (the counterpart of the macOS

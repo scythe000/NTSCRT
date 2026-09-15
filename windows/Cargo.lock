@@ -2407,6 +2407,7 @@ dependencies = [
 name = "ntscrt-app"
 version = "0.1.0"
 dependencies = [
+ "arboard",
  "bytemuck",
  "eframe",
  "egui",

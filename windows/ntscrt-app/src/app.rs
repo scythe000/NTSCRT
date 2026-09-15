@@ -57,12 +57,19 @@ pub struct NtscrtApp {
     pub ntsc: NtscStage,
 
     // ---- shader ----
+    /// Off bypasses the CRT shader: the preview and exports show the chain
+    /// input (the NTSC stage and downscale) upscaled with nearest sampling,
+    /// so the signal stage can be judged on its own.
+    pub shader_enabled: bool,
     pub shader_id: String,
     /// Current value per parameter name.
     pub shader_params: HashMap<String, f32>,
     /// Declared metadata (label, range, step) in shader declaration order.
     pub shader_param_meta: Vec<ShaderParamMeta>,
     chain: Option<ShaderChain>,
+    /// Parameter values of shaders switched away from, so coming back to
+    /// one restores what was dialled in rather than its defaults.
+    saved_shader_params: HashMap<String, HashMap<String, f32>>,
 
     // ---- video ----
     /// The clip, when the source is a video rather than a still. Playback,
@@ -87,7 +94,9 @@ pub struct NtscrtApp {
     pub frame_count: usize,
 
     // ---- export ----
-    pub export_height: u32,
+    /// Requested size of the output's longer side; the other follows the
+    /// source aspect. See [`NtscrtApp::export_output_size`].
+    pub export_long_edge: u32,
     pub snap_to_scanline_grid: bool,
     /// Movie export settings. Ignored when the source is a still and
     /// `export_still_frames` is None — that case writes a PNG.
@@ -149,12 +158,15 @@ impl NtscrtApp {
             downscale_preset: "VGA (320px)".to_string(),
             downscale_method: DownscaleMethod::Area,
             ntsc_enabled: true,
-            ntsc: NtscStage::new(),
+            ntsc: NtscStage::house(),
             video: None,
-            shader_id: "royale".to_string(),
+            shader_enabled: true,
+            // The macOS build opens on CRT Glow (Gaussian) too.
+            shader_id: "glow_gauss".to_string(),
             shader_params: HashMap::new(),
             shader_param_meta: Vec::new(),
             chain: None,
+            saved_shader_params: HashMap::new(),
             animate: false,
             compare: false,
             compare_split: 0.5,
@@ -162,7 +174,7 @@ impl NtscrtApp {
             pan: egui::Vec2::ZERO,
             integer_scale: true,
             frame_count: 0,
-            export_height: 960,
+            export_long_edge: 1920,
             snap_to_scanline_grid: false,
             export_job: crate::video::ExportJob::default(),
             export_task: None,
@@ -310,13 +322,19 @@ impl NtscrtApp {
         };
         match ShaderChain::load(&path, device, queue, None, self.pipeline_cache) {
             Ok(chain) => {
+                let saved = self.saved_shader_params.remove(&self.shader_id);
                 self.shader_params.clear();
                 self.shader_param_meta = chain.parameters().to_vec();
                 for p in &self.shader_param_meta {
-                    // Prefer what the chain actually holds (the preset may
-                    // override the shader's own default); fall back to the
-                    // declared initial value.
-                    let v = chain.parameter(&p.name).unwrap_or(p.initial);
+                    // Start from the house default when the app has one,
+                    // else what the chain holds (the .slangp may override
+                    // the shader's declared value), else the declaration —
+                    // then restore what the user last dialled in here.
+                    let v = saved
+                        .as_ref()
+                        .and_then(|s| s.get(&p.name).copied())
+                        .unwrap_or_else(|| self.shader_default(&p.name, p.initial, Some(&chain)));
+                    chain.set_parameter(&p.name, v);
                     self.shader_params.insert(p.name.clone(), v);
                 }
                 self.chain = Some(chain);
@@ -330,12 +348,71 @@ impl NtscrtApp {
         }
     }
 
+    /// Switch to another bundled shader, remembering this one's parameter
+    /// values so switching back restores them. A no-op for the current id.
+    pub fn select_shader(&mut self, id: &str, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if self.shader_id == id {
+            return;
+        }
+        if !self.shader_params.is_empty() {
+            self.saved_shader_params
+                .insert(self.shader_id.clone(), self.shader_params.clone());
+        }
+        self.shader_id = id.to_string();
+        self.reload_chain(device, queue);
+    }
+
+    /// The value a parameter opens on for the current shader: the house
+    /// override when there is one, else what the loaded chain holds (the
+    /// .slangp may set it), else the shader's declaration.
+    fn shader_default(&self, name: &str, declared: f32, chain: Option<&ShaderChain>) -> f32 {
+        crate::presets::house_shader_default(&self.shader_id, name)
+            .or_else(|| chain.and_then(|c| c.parameter(name)))
+            .unwrap_or(declared)
+    }
+
+    /// Put every parameter of the current shader back to its default.
+    pub fn reset_shader_params(&mut self) {
+        // The chain's values are the *current* ones by now, so the fallback
+        // has to be the declaration, not the chain.
+        let values: Vec<(String, f32)> = self
+            .shader_param_meta
+            .iter()
+            .map(|p| (p.name.clone(), self.shader_default(&p.name, p.initial, None)))
+            .collect();
+        for (name, v) in values {
+            self.set_shader_param(&name, v);
+        }
+        self.leave_preset();
+        self.auto_key_if_parked();
+    }
+
+    /// Put the whole signal stage back to the house look.
+    pub fn reset_ntsc(&mut self) {
+        if let Err(e) = self.ntsc.reset_to_house_defaults() {
+            self.error = Some(format!("Reset failed: {e}"));
+            return;
+        }
+        self.mark_chain_input_edited();
+        self.auto_key_if_parked();
+    }
+
     pub fn set_shader_param(&mut self, name: &str, value: f32) {
         if let Some(chain) = &self.chain {
             chain.set_parameter(name, value);
         }
         self.shader_params.insert(name.to_string(), value);
         self.dirty = true;
+    }
+
+    /// Turn the CRT shader on or off. Cached video frames stay valid: they
+    /// hold the chain *input*, which the shader only reads.
+    pub fn set_shader_enabled(&mut self, on: bool) {
+        if self.shader_enabled != on {
+            self.shader_enabled = on;
+            self.leave_preset();
+            self.mark_dirty();
+        }
     }
 
     pub fn has_chain(&self) -> bool {
@@ -394,6 +471,7 @@ impl NtscrtApp {
         // `&self` (like `downscale_spec`) may be called inside it.
         let downscale = self.downscale_spec();
         let ntsc_enabled = self.ntsc_enabled;
+        let shader_enabled = self.shader_enabled;
         let frame_count = self.frame_count;
         let source_version = self.source_version;
         let id = self.preview_texture.as_ref().unwrap().3;
@@ -438,6 +516,7 @@ impl NtscrtApp {
             source_size: (source.width, source.height),
             downscale,
             ntsc_enabled,
+            shader_enabled,
             frame_count,
             source_version,
             prepared_chain_input: prepared,
@@ -574,7 +653,7 @@ impl NtscrtApp {
                     .unwrap_or(serde_json::Value::Null),
             },
             shader: ShaderSection {
-                enabled: true,
+                enabled: self.shader_enabled,
                 preset: self.shader_id.clone(),
                 params: self.shader_params.iter().map(|(k, v)| (k.clone(), *v)).collect(),
             },
@@ -622,11 +701,9 @@ impl NtscrtApp {
 
         // Swap the shader before pushing parameters — the chain owns them,
         // and a chain for the wrong preset would reject the names.
+        self.shader_enabled = preset.shader.enabled;
         if crate::presets::find(&preset.shader.preset).is_some() {
-            if self.shader_id != preset.shader.preset {
-                self.shader_id = preset.shader.preset.clone();
-                self.reload_chain(device, queue);
-            }
+            self.select_shader(&preset.shader.preset, device, queue);
             let mut unknown = 0usize;
             for (name, value) in &preset.shader.params {
                 if self.shader_params.contains_key(name) {
@@ -801,7 +878,16 @@ impl NtscrtApp {
         }
     }
 
-    /// Shared by the sidebar's Export button and the CLI path.
+    /// The size the export will actually have — see [`export_output_size`].
+    pub fn export_output_size(&self) -> (u32, u32) {
+        export_output_size(
+            self.export_long_edge,
+            self.chain_input_size(),
+            self.snap_to_scanline_grid,
+            self.exports_video(),
+        )
+    }
+
     /// The current configuration as render settings. Shared by every export
     /// path so a still and a movie cannot drift apart.
     pub(crate) fn render_settings(&self) -> crate::RenderSettings {
@@ -809,12 +895,13 @@ impl NtscrtApp {
             downscale_width: self.downscale_enabled.then_some(self.downscale_width),
             downscale_method: self.downscale_method,
             ntsc_enabled: self.ntsc_enabled,
+            shader_enabled: self.shader_enabled,
             rotation: self.rotation,
             timeline: self.timeline.clone(),
             ntsc_preset_json: self.ntsc.settings_json().ok(),
             shader_id: self.shader_id.clone(),
             shader_params: self.shader_params.iter().map(|(k, v)| (k.clone(), *v)).collect(),
-            output_height: self.export_height,
+            output_height: self.export_output_size().1,
             snap_to_scanline_grid: self.snap_to_scanline_grid,
             frame_count: self.frame_count,
         }
@@ -883,3 +970,64 @@ impl ExportTask {
 /// eframe hands out `RenderState` behind an `Arc`-ish clone; alias it so the
 /// UI modules don't need the egui_wgpu path.
 pub type RenderState = egui_wgpu::RenderState;
+
+/// Output dimensions for an export, from the requested long edge and the
+/// chain input the shader sees. The long edge is the side the user asked
+/// for and the other follows the chain's aspect, as `ExportPopover` does on
+/// the Mac; the width is then derived from the height the same way the
+/// renderer does it, so the number shown is the number written. With
+/// `snap` on the size is rounded onto the scanline grid instead, and movie
+/// encoders need `even` dimensions.
+pub fn export_output_size(long_edge: u32, chain: (u32, u32), snap: bool, even: bool) -> (u32, u32) {
+    let (cw, ch) = (chain.0.max(1) as f64, chain.1.max(1) as f64);
+    let long_edge = long_edge.max(16) as f64;
+    let height = if cw >= ch { (long_edge * ch / cw).round().max(16.0) } else { long_edge };
+    let height = height as u32;
+    let (mut w, mut h) = if snap {
+        ntscrt_core::ScanlineGrid::snapped_size(chain.0, chain.1, height)
+    } else {
+        ((height as f64 * cw / ch).round().max(1.0) as u32, height)
+    };
+    if even {
+        w &= !1;
+        h &= !1;
+    }
+    (w, h)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::export_output_size;
+
+    #[test]
+    fn long_edge_is_the_wide_side_of_a_landscape_source() {
+        assert_eq!(export_output_size(1920, (320, 240), false, false), (1920, 1440));
+        assert_eq!(export_output_size(1920, (640, 360), false, false), (1920, 1080));
+    }
+
+    #[test]
+    fn long_edge_is_the_tall_side_of_a_portrait_source() {
+        assert_eq!(export_output_size(1920, (240, 320), false, false), (1440, 1920));
+    }
+
+    #[test]
+    fn movies_get_even_dimensions() {
+        // 1366x768 → 1079 tall → 1919 wide before evening.
+        let (w, h) = export_output_size(1920, (1366, 768), false, true);
+        assert_eq!((w % 2, h % 2), (0, 0));
+        assert_eq!((w, h), (1918, 1078));
+    }
+
+    #[test]
+    fn snapping_lands_on_a_whole_number_of_rows_per_line() {
+        let (w, h) = export_output_size(1000, (320, 240), true, false);
+        assert_eq!(h % 240, 0, "{h} rows is not a multiple of 240 lines");
+        assert_eq!(w, h * 320 / 240);
+    }
+
+    #[test]
+    fn a_degenerate_chain_does_not_divide_by_zero() {
+        let (w, h) = export_output_size(1920, (0, 0), false, false);
+        assert!(w >= 1 && h >= 16);
+    }
+}

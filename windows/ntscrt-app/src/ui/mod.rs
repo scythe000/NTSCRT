@@ -37,23 +37,14 @@ pub(super) fn labelled_slider<N: egui::emath::Numeric>(
     let speed = step.filter(|s| *s > 0.0).unwrap_or((hi - lo).abs() / 200.0).max(1e-6);
 
     ui.vertical(|ui| {
-        let field = ui
-            .horizontal(|ui| {
-                let l = ui.add(egui::Label::new(label).truncate());
-                if !hover.is_empty() {
-                    l.on_hover_text(hover);
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let mut field = egui::DragValue::new(value).range(range.clone()).speed(speed);
-                    // Integers keep DragValue's own zero-decimal formatting.
-                    if !N::INTEGRAL {
-                        field = field.max_decimals(4);
-                    }
-                    ui.add(field)
-                })
-                .inner
-            })
-            .inner;
+        let (_, field) = label_row(ui, label, hover, |ui| {
+            let mut field = egui::DragValue::new(value).range(range.clone()).speed(speed);
+            // Integers keep DragValue's own zero-decimal formatting.
+            if !N::INTEGRAL {
+                field = field.max_decimals(4);
+            }
+            ui.add(field)
+        });
 
         ui.spacing_mut().slider_width = ui.available_width();
         let mut slider = egui::Slider::new(value, range)
@@ -68,6 +59,37 @@ pub(super) fn labelled_slider<N: egui::emath::Numeric>(
         let slider = ui.add(slider);
         let slider = if hover.is_empty() { slider } else { slider.on_hover_text(hover) };
         slider | field
+    })
+    .inner
+}
+
+/// A row with a left-aligned, truncating label and right-aligned controls.
+///
+/// The controls are laid out first, so a long label truncates to the space
+/// they leave rather than running underneath them — laying the label out
+/// first would have it measure against the whole row. Returns the label's
+/// response and whatever `controls` returned.
+pub(super) fn label_row<R>(
+    ui: &mut egui::Ui,
+    label: &str,
+    hover: &str,
+    controls: impl FnOnce(&mut egui::Ui) -> R,
+) -> (egui::Response, R) {
+    // `horizontal` sizes the row to one control's height; the nested layout
+    // then fills it from the right.
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let r = controls(ui);
+            let size = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
+            let label = ui
+                .allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    let l = ui.add(egui::Label::new(label).truncate());
+                    if hover.is_empty() { l } else { l.on_hover_text(hover) }
+                })
+                .inner;
+            (label, r)
+        })
+        .inner
     })
     .inner
 }
@@ -435,23 +457,23 @@ fn export_panel(app: &mut NtscrtApp, ui: &mut egui::Ui) {
         .default_open(false)
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label("Height");
-                ui.add(egui::DragValue::new(&mut app.export_height).range(16..=8192).speed(8));
+                ui.label("Long edge");
+                ui.add(
+                    egui::DragValue::new(&mut app.export_long_edge)
+                        .range(64..=8192)
+                        .speed(8)
+                        .suffix(" px"),
+                )
+                .on_hover_text(
+                    "Size of the output's longer side. The other side follows the \
+                     source's aspect ratio.",
+                );
             });
 
-            let (cw, ch) = app.chain_input_size();
-            let (mut out_w, mut out_h) = if app.snap_to_scanline_grid {
-                ntscrt_core::ScanlineGrid::snapped_size(cw, ch, app.export_height)
-            } else {
-                let w = (app.export_height as f64 * cw as f64 / ch.max(1) as f64).round() as u32;
-                (w.max(1), app.export_height.max(1))
-            };
-            // Movie encoders take even dimensions (see `video::export`), so
-            // show the size the file will actually have.
-            if app.exports_video() {
-                out_w &= !1;
-                out_h &= !1;
-            }
+            let (_, ch) = app.chain_input_size();
+            // The size the file will actually have — even dimensions for
+            // movies, snapped when asked (see `export_output_size`).
+            let (out_w, out_h) = app.export_output_size();
             ui.label(
                 egui::RichText::new(format!("\u{2192} {out_w}\u{00D7}{out_h}"))
                     .monospace()

@@ -17,13 +17,16 @@ pub struct RenderSettings {
     pub downscale_width: Option<u32>,
     pub downscale_method: DownscaleMethod,
     pub ntsc_enabled: bool,
+    /// Off writes the chain input itself, nearest-scaled to the output.
+    pub shader_enabled: bool,
     /// Applied to the source before the signal stage. See
     /// `ntscrt_core::rotation`.
     pub rotation: ntscrt_core::Rotation,
     /// Keyframe animation. When present and non-empty, the NTSC settings and
     /// shader parameters are evaluated per frame instead of being fixed.
     pub timeline: Option<ntscrt_core::Timeline>,
-    /// ntsc-rs preset JSON. None keeps ntsc-rs defaults.
+    /// ntsc-rs preset JSON. None uses the house look the app opens on
+    /// (`NtscStage::house`).
     pub ntsc_preset_json: Option<String>,
     pub shader_id: String,
     /// Shader parameter overrides applied after the chain loads. Names the
@@ -42,6 +45,7 @@ impl Default for RenderSettings {
             downscale_width: Some(320),
             downscale_method: DownscaleMethod::Area,
             ntsc_enabled: true,
+            shader_enabled: true,
             rotation: ntscrt_core::Rotation::None,
             timeline: None,
             ntsc_preset_json: None,
@@ -67,6 +71,7 @@ pub struct FrameSequence {
     pub output_size: (u32, u32),
     downscale: Option<DownscaleSpec>,
     ntsc_enabled: bool,
+    shader_enabled: bool,
     /// Built once from the timeline plus the chain's own parameter bounds,
     /// then read per frame.
     evaluator: Option<ntscrt_core::TimelineEvaluator>,
@@ -151,7 +156,7 @@ impl HeadlessRenderer {
         }))?;
 
         let pipeline = Pipeline::new(&device);
-        Ok(Self { device, queue, adapter_info, pipeline, ntsc: NtscStage::new(), pipeline_cache })
+        Ok(Self { device, queue, adapter_info, pipeline, ntsc: NtscStage::house(), pipeline_cache })
     }
 
     pub fn adapter_info(&self) -> &wgpu::AdapterInfo {
@@ -173,8 +178,9 @@ impl HeadlessRenderer {
         settings: &RenderSettings,
         source_size: (u32, u32),
     ) -> Result<FrameSequence, Box<dyn std::error::Error>> {
-        if let Some(json) = &settings.ntsc_preset_json {
-            self.ntsc.set_settings_json(json)?;
+        match &settings.ntsc_preset_json {
+            Some(json) => self.ntsc.set_settings_json(json)?,
+            None => self.ntsc.reset_to_house_defaults()?,
         }
 
         let entry = crate::presets::find(&settings.shader_id)
@@ -194,6 +200,16 @@ impl HeadlessRenderer {
             self.pipeline_cache,
         )?;
 
+        // House defaults first, then the caller's overrides — the same
+        // layering the app applies, so the CLI matches what the app shows.
+        if let Some((_, house)) = crate::presets::HOUSE_SHADER_DEFAULTS
+            .iter()
+            .find(|(id, _)| *id == settings.shader_id)
+        {
+            for (name, value) in *house {
+                chain.set_parameter(name, *value);
+            }
+        }
         for (name, value) in &settings.shader_params {
             chain.set_parameter(name, *value);
         }
@@ -268,6 +284,7 @@ impl HeadlessRenderer {
             output_size,
             downscale,
             ntsc_enabled: settings.ntsc_enabled,
+            shader_enabled: settings.shader_enabled,
             evaluator,
             timeline_frames,
         })
@@ -317,6 +334,7 @@ impl HeadlessRenderer {
                 source_size,
                 downscale: sequence.downscale,
                 ntsc_enabled: sequence.ntsc_enabled,
+                shader_enabled: sequence.shader_enabled,
                 frame_count,
                 // No version means "these are new pixels": the stage snapshots
                 // them rather than restoring the previous frame's.
@@ -355,6 +373,7 @@ impl HeadlessRenderer {
                 source_size: (chain_input.width(), chain_input.height()),
                 downscale: None,
                 ntsc_enabled: false,
+                shader_enabled: sequence.shader_enabled,
                 frame_count,
                 source_version: 0,
                 prepared_chain_input: Some(chain_input),
