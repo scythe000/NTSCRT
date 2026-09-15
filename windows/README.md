@@ -71,7 +71,8 @@ zooms.
 **Presets** — save or load your entire configuration (downscale, NTSC, shader
 and every shader parameter) as JSON, with the 17 bundled presets listed
 underneath, with a tick against the loaded one that clears as soon as you
-change anything it controls. Loading a preset turns **Animate** on whatever
+change anything it controls. Eight of them are keyframe-animated and play
+their animation. Loading a preset turns **Animate** on whatever
 the preset itself stores: these looks are built out of tape noise and
 tracking error, and frozen on one frame a preset shows you a still that
 happens to be noisy rather than the effect it is for. The format is the
@@ -107,6 +108,15 @@ quietly dropping someone's animation.
   file size before writing it. Movie exports run on their own thread with a
   progress bar in the panel and the status bar, and can be cancelled — a
   cancelled export removes its partial file.
+
+**Animate (timeline)** — toggle **Timeline** in the toolbar to keyframe the
+whole effect chain: scrub the playhead, dial in a look, press **Keyframe**,
+move, dial in another. Everything keys together as one master keyframe, so
+parameters you don't change between keys hold still on their own. Click a
+diamond to jump to it, drag it to retime, and pick its easing (linear, ease
+in, ease out, ease in-out, hold) from the dropdown underneath. Keyframe
+times are proportional, so changing the duration stretches the whole
+animation. Exports render the animation frame by frame.
 
 **Video** — open a clip and a transport bar docks under the preview:
 play/pause (Space), a frame-accurate scrubber, and a render bar showing how
@@ -167,9 +177,6 @@ same for the bundled `presets/` JSON.
 
 ## Differences from the macOS build
 
-- **No keyframe timeline.** Video plays, scrubs and exports, but the
-  keyframe animation the macOS build offers is not here. Presets that carry
-  keyframes load and are preserved on save; they just don't animate.
 - **No HEIC.** The `image` crate covers PNG/JPEG/BMP/TIFF/WebP; HEIC has no
   pure-Rust decoder. The macOS build gets it free from ImageIO.
 - **Not frame-identical to the Mac build.** The macOS build pins librashader to
@@ -195,7 +202,10 @@ On an RTX 3090 (Vulkan backend):
 - All five export formats produce valid files (checked with `ffprobe`), GIF
   honouring its own width and rate. Loop 3 turns 48 frames into 144. A still
   exported as video genuinely animates.
-- 88 tests pass (`cargo test --release`), no warnings.
+- Keyframes: 'Very wavy' sweeps `vhs_edge_wave` 0.5 -> 7.29 -> 0.5 across its
+  48 frames (it was frozen at 1.64), and all 8 animated presets evaluate over
+  real ranges. The animation bakes into exports frame by frame.
+- 118 tests pass (`cargo test --release`), no warnings.
 
 The GUI launches and runs clean; its visual layout has not been checked against
 the macOS app side by side.
