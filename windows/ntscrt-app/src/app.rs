@@ -75,7 +75,15 @@ pub struct NtscrtApp {
     pub compare: bool,
     /// Split position as a fraction of preview width, 0..1.
     pub compare_split: f32,
+    /// Display magnification of the preview; 1 fits the panel.
     pub zoom: f32,
+    /// Where the zoomed image sits, as an offset of its centre from the
+    /// panel's centre in points. Only meaningful when it is larger than
+    /// the panel.
+    pub pan: egui::Vec2,
+    /// Lock the displayed image to whole-pixel multiples of the chain input
+    /// so every scanline is the same height on screen.
+    pub integer_scale: bool,
     pub frame_count: usize,
 
     // ---- export ----
@@ -151,6 +159,8 @@ impl NtscrtApp {
             compare: false,
             compare_split: 0.5,
             zoom: 1.0,
+            pan: egui::Vec2::ZERO,
+            integer_scale: true,
             frame_count: 0,
             export_height: 960,
             snap_to_scanline_grid: false,
@@ -571,7 +581,7 @@ impl NtscrtApp {
             view: ViewSection {
                 animate: self.animate,
                 compare: self.compare,
-                integer_scale: true,
+                integer_scale: self.integer_scale,
             },
             rotation: self.rotation,
             timeline: self.timeline.clone(),
@@ -642,6 +652,7 @@ impl NtscrtApp {
         // round-tripped on save, it just doesn't decide what you see.
         self.animate = true;
         self.compare = preset.view.compare;
+        self.integer_scale = preset.view.integer_scale;
         self.set_rotation(preset.rotation);
 
         let keyed = preset.has_keyframes();

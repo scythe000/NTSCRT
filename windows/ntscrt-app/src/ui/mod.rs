@@ -114,16 +114,49 @@ pub fn top_bar(app: &mut NtscrtApp, root: &mut egui::Ui, rs: Option<&RenderState
                 .on_hover_text("Run the preview continuously so tape noise, jitter and \
                                 interlacing actually move.");
             if ui.checkbox(&mut app.compare, "Compare").on_hover_text(
-                "Full pipeline left of the line, untouched source right.").changed() {
+                "Full pipeline left of the line, untouched source right. Drag the line \
+                 to move the split.").changed() {
+                app.mark_dirty();
+            }
+            if ui
+                .checkbox(&mut app.integer_scale, "Integer scale")
+                .on_hover_text(
+                    "Lock the preview to whole-pixel multiples of the downscale, so every \
+                     scanline is the same height on screen (letterboxed).",
+                )
+                .changed()
+            {
                 app.mark_dirty();
             }
 
             ui.separator();
             ui.label("Zoom");
-            if ui.add(egui::Slider::new(&mut app.zoom, 0.25..=4.0).show_value(false)).changed() {
+            if ui
+                .add(
+                    egui::Slider::new(
+                        &mut app.zoom,
+                        preview_panel::MIN_ZOOM..=preview_panel::MAX_ZOOM,
+                    )
+                    .logarithmic(true)
+                    .show_value(false),
+                )
+                .on_hover_text(
+                    "Magnify the preview (or Alt+scroll over it). Hold Space and drag to \
+                     pan; double-click the preview to reset.",
+                )
+                .changed()
+            {
                 app.mark_dirty();
             }
-            ui.label(format!("{:.0}%", app.zoom * 100.0));
+            if ui
+                .add(egui::Button::new(format!("{:.0}%", app.zoom * 100.0)).frame(false))
+                .on_hover_text("Reset zoom")
+                .clicked()
+            {
+                app.zoom = 1.0;
+                app.pan = egui::Vec2::ZERO;
+                app.mark_dirty();
+            }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(4.0);
