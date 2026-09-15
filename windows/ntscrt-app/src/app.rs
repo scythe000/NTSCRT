@@ -128,6 +128,10 @@ pub struct NtscrtApp {
     pub timeline_playing: bool,
     /// Whether the timeline bar is shown.
     pub timeline_open: bool,
+    /// Wall-clock pacing for the timeline preview and Animate, so neither
+    /// runs at the display's refresh rate. See `pacer`.
+    timeline_pacer: crate::pacer::Pacer,
+    animate_pacer: crate::pacer::Pacer,
 
     pub status: Option<String>,
     pub error: Option<String>,
@@ -188,6 +192,8 @@ impl NtscrtApp {
             playhead: 0.0,
             timeline_playing: false,
             timeline_open: false,
+            timeline_pacer: Default::default(),
+            animate_pacer: Default::default(),
             status: None,
             error: None,
             dirty: true,
@@ -563,20 +569,37 @@ impl eframe::App for NtscrtApp {
         let ctx = ui.ctx().clone();
 
         // A playing video drives its own frame index off the wall clock, so
-        // Animate only applies to stills. Both want a repaint every frame.
+        // Animate only applies to stills. Neither may advance once per
+        // repaint — that would tie their speed to the display's refresh
+        // rate — so both are paced against the clock, like the macOS app.
+        let now = std::time::Instant::now();
         if self.is_playing() {
             self.consume_playback_frame();
             ctx.request_repaint();
         } else if self.animate {
             // Leave Animate on for the real experience: tape noise, jitter
-            // and interlacing only move when the frame index advances.
-            self.frame_count = self.frame_count.wrapping_add(1);
-            ctx.request_repaint();
+            // and interlacing only move when the frame index advances. NTSC
+            // is a 30 fps format, and the stage is CPU work at full source
+            // resolution, so that is where Animate is capped.
+            let fps = if self.ntsc_enabled { 30.0 } else { 60.0 };
+            if self.animate_pacer.frames_due(now, fps) > 0 {
+                self.frame_count = self.frame_count.wrapping_add(1);
+            }
+            ctx.request_repaint_after(self.animate_pacer.until_next(now));
+        } else {
+            self.animate_pacer.reset();
         }
-        // Previewing a keyframe animation advances the playhead itself.
+        // Previewing a keyframe animation advances the playhead itself, at
+        // the timeline's own frame rate.
         if self.timeline_playing {
-            self.tick_timeline_preview();
-            ctx.request_repaint();
+            let (_, fps) = self.effective_timeline();
+            let due = self.timeline_pacer.frames_due(now, fps);
+            if due > 0 {
+                self.tick_timeline_preview(due);
+            }
+            ctx.request_repaint_after(self.timeline_pacer.until_next(now));
+        } else {
+            self.timeline_pacer.reset();
         }
 
         // An export publishes progress from its own thread, so the window

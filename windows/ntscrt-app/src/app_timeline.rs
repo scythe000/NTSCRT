@@ -297,17 +297,24 @@ impl NtscrtApp {
         self.mark_chain_input_edited();
     }
 
-    /// Advance the playhead while previewing the animation, looping at the
-    /// end. Stills only — a video's playhead is driven by playback.
-    pub fn tick_timeline_preview(&mut self) {
+    /// Advance the playhead by `frames` timeline frames while previewing
+    /// the animation, looping at the end. Stills only — a video's playhead
+    /// is driven by playback.
+    ///
+    /// The VHS noise advances with it even when Animate is off, as on the
+    /// Mac: a keyframe loop with frozen tape noise looks wrong.
+    pub fn tick_timeline_preview(&mut self, frames: u32) {
         if !self.timeline_playing || self.video.is_some() {
             return;
         }
         let (duration, fps) = self.effective_timeline();
-        let frames = (duration * fps).round().max(1.0);
-        let step = 1.0 / frames;
+        let total = (duration * fps).round().max(1.0);
+        let step = frames as f64 / total;
         let next = self.playhead + step;
         self.playhead = if next > 1.0 { 0.0 } else { next };
+        if !self.animate {
+            self.frame_count = self.frame_count.wrapping_add(frames as usize);
+        }
         self.apply_timeline_at_playhead();
     }
 

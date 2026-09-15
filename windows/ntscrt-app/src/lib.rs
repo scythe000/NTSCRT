@@ -10,6 +10,7 @@ pub mod app_timeline;
 pub mod app_video;
 pub mod gpu;
 pub mod image_io;
+pub mod pacer;
 pub mod param_gates;
 pub mod presets;
 pub mod render;
