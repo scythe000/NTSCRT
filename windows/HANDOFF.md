@@ -5,8 +5,12 @@ port is, what state it's in, the decisions that aren't obvious from the code,
 and the traps that will cost you an hour if nobody warns you.
 
 **Branch:** `windows-port` on `github.com/scythe000/NTSCRT` (a fork of
-`finnmckenty/NTSCRT`). 14 commits, ~10,000 lines of Rust/WGSL under `windows/`.
-Everything below is pushed.
+`finnmckenty/NTSCRT`). 27 commits, ~11,000 lines of Rust/WGSL under `windows/`
+plus the release workflow in `.github/`. Everything below is pushed.
+
+The first 14 commits built the port headlessly. The rest were a second pass
+with a screen: the GUI was run on a Linux desktop, looked at, and fixed, and
+the remaining items of the original "where to go next" list (§7) were done.
 
 ---
 
@@ -55,29 +59,37 @@ counterpart in its header comment. Port *behaviour*, not frameworks.
 | Rotation (90/180/270) | ✅ verified stills + video + export |
 | App presets (load/save, 17 bundled) | ✅ all parse, format compatible |
 | Keyframe timeline + interpolation | ✅ verified numerically |
-| Timeline bar UI | ⚠️ **never looked at** |
-| Export progress + cancel | ✅ verified cancel leaves no partial file |
+| Timeline bar UI | ✅ looked at and driven on a Linux desktop (see below) |
+| Keyframes animating during video playback / scrub | ✅ verified on screen |
+| Export progress + cancel | ✅ in the toolbar; cancel leaves no partial file |
+| Audio on video export | ✅ AAC muxed, looped, cut to length; ffprobe-checked |
+| Preview zoom / pan / integer scale | ✅ pure `frame()` unit-tested + on screen |
+| Icon, DPI manifest, zip, release workflow | ✅ zip built and checked here; the workflow has not run yet |
 
-**118 tests, zero warnings.** 52 in `ntscrt-core`, 66 in `ntscrt-app`.
+**130 tests, zero warnings.** 52 in `ntscrt-core`, 78 in `ntscrt-app`.
 
-### ⚠️ The big caveat
+### How the GUI was verified — and what that does and doesn't cover
 
-**Almost none of the GUI has been visually verified.** The sessions that built
-this had no interactive desktop — screen capture failed with "handle is
-invalid". Everything above was verified *headlessly*, through the identical
-code path, via `ntscrt-smoke`. The app launches clean and renders correct
-pixels, but nobody has looked at the sidebar, the transport bar, the export
-panel, or the timeline bar.
+The first sessions had no desktop, so the GUI was a guess. The second pass
+built the app **on Linux** (an X11 desktop with Mesa's `lavapipe` software
+Vulkan driver — see §4) and drove it with `xdotool`, reading back
+screenshots. Every panel was looked at; the timeline bar in particular was
+rewritten against `TimelineBar.swift` after that look. The fixes that came
+out of it are the commits from `ab96348` on.
 
-**If you can see a screen, that is the single highest-value thing you can do.**
-Run it, look at it, fix what's ugly or broken.
+What that does **not** cover: nothing here has been run on a **Windows**
+desktop since those changes. The D3D12 path, `rfd` file dialogs, DPI scaling
+and the embedded icon were only ever exercised by the earlier, headless
+Windows sessions (icon and manifest never — they're new). The packaged zip
+from the workflow is the thing to run first.
 
 ### Known gaps
 
-- **Timeline bar is unverified visually** — diamonds, ruler spacing, easing
-  chips, drag-to-retime. Most likely place for real bugs.
-- **No cached-frame strip under the timeline ruler.** macOS has one; the
-  transport bar already shows cache coverage, so it was skipped.
+- **Not run on Windows since the GUI pass** — see above.
+- **Zip only.** No installer, no code signing. SmartScreen will warn on an
+  unsigned download.
+- **ffmpeg is not bundled.** The README tells the user to install it; the
+  app reports clearly when it's missing.
 - **No HEIC.** The `image` crate covers PNG/JPEG/BMP/TIFF/WebP; HEIC has no
   pure-Rust decoder. macOS gets it free from ImageIO.
 - **Not frame-identical to the Mac build,** and can't be. macOS pins
@@ -121,9 +133,18 @@ windows/
     param_gates.rs        shader param gating       (ParamGates.swift)
     render.rs             HeadlessRenderer, FrameSequence — the export path
     bin/smoke.rs          ntscrt-smoke, the headless verifier
+    build.rs              .ico from Assets/icon-source.png + DPI manifest (Windows only)
+  package.ps1             stage + zip a release; also what CI runs
+.github/workflows/windows.yml   build, test, package; release on v* tags
 ```
 
 Two binaries: `ntscrt.exe` (the app) and `ntscrt-smoke.exe` (the verifier).
+
+In `ui/`: `mod.rs` holds the toolbar (including `export_control`, the
+button-that-becomes-a-progress-bar), status bar, export panel and the shared
+`labelled_slider`; `preview_panel.rs` the preview with its pure `frame()`
+geometry; `timeline_bar.rs` and `transport_bar.rs` the two bottom bars (they
+share `paint_cached_runs` for the cached-frame strip).
 
 ---
 
@@ -141,6 +162,43 @@ workload, and ffmpeg on PATH (this machine has it at `C:\ffmpeg\bin`).
 
 **Always use `--release`.** The NTSC stage is CPU-bound and unusably slow
 unoptimised; dependencies are optimised even in debug for the same reason.
+
+```powershell
+pwsh windows/package.ps1            # → windows/dist/NTSCRT-<version>-windows-x64.zip
+```
+
+The script runs the tests, builds, stages `ntscrt.exe`, `ntscrt-smoke.exe`,
+`shaders/` (the whole slang-shaders tree minus `.git`), `presets/` and the
+README, runs `ntscrt-smoke --list-shaders` *from the staged folder* to prove
+the beside-the-exe lookup works, and zips. The workflow does the same on
+`windows-latest` and attaches the zip to a Release for a `v*` tag.
+
+### Building on Linux, for looking at the GUI
+
+Linux is a verification target only, but it is how the GUI got looked at.
+On Ubuntu with an X11 desktop:
+
+```bash
+sudo apt-get install -y g++ libstdc++-13-dev mesa-vulkan-drivers ffmpeg xdotool
+cd windows
+CXX=g++ CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=gcc cargo build --release
+./target/release/ntscrt ../TestAssets/game-frame.png     # or NTSCRT_SOURCE=…
+```
+
+- `Cargo.toml` enables eframe's `x11` feature for Linux only; without it
+  winit has no backend and the build fails with "platform not supported".
+- The `CXX`/linker overrides are for machines where `cc` is a symlink to
+  clang that can't find `libstdc++` headers — librashader's `glslang-sys` and
+  `spirv-cross-sys` are C++. Plain gcc toolchains don't need them.
+- `mesa-vulkan-drivers` gives wgpu `lavapipe`, a software Vulkan device, so
+  it runs with no GPU. Slowly, but correctly.
+- `NTSCRT_SOURCE=<file>` or a positional argument opens a file at launch;
+  `NTSCRT_EXPORT=<dest>` starts an export at launch so the progress UI can be
+  seen without clicking through a file dialog.
+- Drive it with `xdotool` (`mousemove x y click 1`, `keydown alt` + `click 4`
+  for Alt+scroll, etc.) and capture with `ffmpeg -f x11grab`. Screenshot
+  coordinates are in screen pixels; if you scale the shot down to read it,
+  scale your clicks back up.
 
 ### ntscrt-smoke is your most valuable tool
 
@@ -253,6 +311,67 @@ ways. Rotation was added as a top-level `rotation` key in degrees — Swift's
 decoder ignores keys it doesn't know, so that's safe. **Don't restructure the
 format.** If you add a field, add it optional with a default.
 
+### On a video, the timeline *replaces* the transport bar
+
+As on macOS. Both have a play button and a scrubber; showing both stacked
+the controls twice. `transport_bar::show` returns early when
+`timeline_open`, and the timeline bar carries the cached-frame strip
+(`paint_cached_runs`, shared between the two).
+
+### Keyframes on video: the producer gets a per-frame settings closure
+
+Playback frames are made on a background thread, so the timeline can't be
+applied on the UI thread as it is for stills. `playback::Config` carries an
+optional `PerFrameJson` closure (`Arc<dyn Fn(usize) -> Option<String>>`)
+built from the `TimelineEvaluator`, which is pure data and so `Send + Sync`.
+The producer asks it for frame *n*'s NTSC JSON before degrading frame *n*.
+Set it in **all three** places a config is pushed — `push_playback_config`,
+`start_pipeline`, `tick_prerender` — or one path plays unanimated.
+
+### Following the playhead must not invalidate the cache
+
+`apply_timeline_at_playhead` marks the chain input edited (the user moved
+something → re-render). `follow_video_frame` calls
+`apply_timeline_state_at_playhead` instead, which applies the evaluated
+settings **without** that mark. Playback and scrubbing go through the latter;
+otherwise every consumed frame threw the RAM preview away.
+
+### Preview framing is one pure function
+
+`preview_panel::frame(panel, image, zoom, pan, integer) -> (Rect, pan)` does
+aspect-fit, the integer-scale snap (rounding *down*, never below 1×, left as
+a plain fit when even 1× won't fit), zoom about the centre, and clamps pan so
+an image edge always reaches a panel edge. It returns the clamped pan so the
+state can't drift while the image is not overflowing. Alt+scroll zooms about
+the cursor by shifting pan by `(centre − cursor) · (new/old − 1)`. Unit-tested
+like `PreviewGeometry.swift`; the interaction code just feeds it.
+
+### Audio is re-encoded, cut with `-t`, never `-shortest`
+
+Same choice as `Mp4Exporter.swift`: AAC 44.1 kHz stereo 128 kbps rather than
+a passthrough that breaks on odd sample rates and layouts. The source file is
+ffmpeg's second input, `-stream_loop (loops−1)` repeats it with the picture,
+and **`-map 0:v:0 -map 1:a:0` is mandatory** — without it ffmpeg picks the
+"best" video stream across inputs, which is the source, not the render.
+`-t <picture length>` trims a long audio track; `-shortest` was rejected
+because a track a few ms *shorter* than the picture would truncate video.
+On cancel ffmpeg is killed rather than allowed to finish the audio.
+
+### The whole shader tree ships
+
+The seven `.slangp` files reference a few dozen `.slang` files, but those
+`#include` across `include/`, `misc/` and `crt-effects/`. A pruned copy
+breaks the day a shader gains an include; the full tree is 65 MB of text
+that zips to well under half of that. `shaders/` beside the exe is the first
+place `presets::shaders_root` looks.
+
+### The icon is generated, not committed
+
+`build.rs` renders `Assets/icon-source.png` (the macOS icon's source) to a
+six-size PNG-compressed `.ico` in `OUT_DIR` on every host, and embeds it with
+`winresource` only when the target is Windows. Both failure modes are soft —
+a missing asset or a missing `rc.exe` warns and the binary still links.
+
 ---
 
 ## 6. Traps
@@ -274,6 +393,33 @@ The API changed substantially and most tutorials/training data are stale:
 - `DroppedFile` is a trait now: `f.path()` (method), not `f.path` (field).
 - Panel builders: `.default_size()` / `.size_range()`, not `.default_width()` /
   `.width_range()`.
+- **`key_pressed` coalesces.** It reports whether the key went down at all
+  this frame, once, with the modifiers as they are *at the end* of the frame.
+  A fast Shift+Left arrived as one unshifted step. Iterate `i.events` and
+  match `Event::Key { pressed: true, modifiers, .. }` — each event carries its
+  own modifiers and repeats are counted. Both bottom bars do this.
+- **`DragValue::max_decimals(4)` prints integers as `0.0`.** It overrides the
+  integer formatting. `labelled_slider` only applies it for non-integral
+  types.
+- **Reserve space for things that may appear.** The timeline bar grew when
+  the first keyframe added an easing chip, shifting every control above it —
+  which made the "Keyframe" button move under a scripted click. The chip
+  row's height is now always reserved.
+
+### Drag identity across a re-sort
+
+`move_keyframe` re-sorts by time, so a dragged key's index changes the
+moment it crosses another. Holding the index across frames broke the drag.
+The bar stores the dragged index in `egui` temp memory and re-points it to
+the index `move_keyframe` returns after every move.
+
+### The desktop can eat your input
+
+On XFCE, Alt+scroll is the **window manager's** desktop magnifier
+(`xfwm4 zoom_desktop`); the app never saw it and the whole screen zoomed
+instead. `xfconf-query -c xfwm4 -p /general/zoom_desktop -s false`, then
+`xfwm4 --replace` to clear an active zoom. If a shortcut "does nothing",
+check whether the desktop took it before debugging the app.
 
 ### wgpu 30 differences
 
@@ -330,25 +476,25 @@ near-identical ones. Compare settings numerically, or look at the images.
 
 ## 7. Where to go next
 
-Roughly in order of value:
+The original seven-item list (look at the GUI, cached-frame strip, timeline
+polish, toolbar export progress, zoom/pan/integer scale, audio, packaging)
+is done. What's left, roughly in order of value:
 
-1. **Look at the GUI.** Especially the timeline bar. This is the biggest
-   unknown in the whole project.
-2. **Cached-frame strip under the timeline ruler** (macOS has one).
-3. **Timeline polish** — right-click a diamond to delete, snap-to-frame while
-   dragging, keyboard nudge.
-4. **Export progress in the toolbar**, as macOS does, so it's visible with
-   every panel closed.
-5. **Integer scale / zoom / pan in the preview.** `PreviewScaling.swift` and
-   `PreviewGeometry.swift` were never ported; the preview currently fits to
-   the window with Alt+scroll zoom only.
-6. **Audio on video export.** Exports are silent: the only thing piped to
-   ffmpeg is rawvideo frames, so there is no audio stream to carry. The macOS
-   ProRes path muxes the source's audio through. Adding it means giving ffmpeg
-   the original file as a second input and mapping its audio track.
-7. **Package it.** No installer, no icon embedding (`winresource` is in
-   `Cargo.toml` as a build-dep but there's no `build.rs` using it), no release
-   workflow.
+1. **Run the zip on a Windows desktop.** Push the branch, take the workflow's
+   artifact, and check what Linux couldn't: the D3D12 backend, the file
+   dialogs, DPI scaling on a HiDPI monitor, the embedded icon in Explorer and
+   the taskbar, and the `.mov`/`.mp4` audio in a Windows player. Then tag
+   `v0.1.0` and the workflow publishes the Release.
+2. **Side-by-side with the macOS app.** The GUI was checked against the
+   Swift *source*, not a running Mac. Someone with both should compare the
+   timeline bar, the preview framing and the panel layout.
+3. **Code signing**, so SmartScreen stops warning. Needs a certificate;
+   the workflow would sign in the Package step.
+4. **An installer** (MSIX or Inno Setup) with a Start-menu entry and file
+   associations. The zip is deliberately the first cut — it needs nothing.
+5. **Undo.** Neither build has it. Presets are the current workaround.
+6. **HEIC** needs a decoder; `libheif` bindings would bring a C dependency the
+   build currently avoids.
 
 ---
 
@@ -363,8 +509,12 @@ Worth keeping, because the codebase is consistent about them:
 - **Tests cover pure logic thoroughly** — easing, interpolation, scanline
   math, rotation, preset round-trips, GIF timing. GPU paths are verified with
   `ntscrt-smoke` instead.
-- **Never claim something was verified if it wasn't.** The GUI caveat in §2
-  exists because that rule was followed. Keep following it — a handoff that
-  overstates what works is worse than one that admits gaps.
+- **Never claim something was verified if it wasn't.** §2 says exactly what
+  the GUI pass covered (Linux, software Vulkan, `xdotool`) and what it
+  didn't (a Windows desktop). Keep following it — a handoff that overstates
+  what works is worse than one that admits gaps.
+- **Look before you fix.** Every GUI change in the second pass started from
+  a screenshot of the actual bug and ended with a screenshot of the fix.
+  Cheap on Linux with `ffmpeg -f x11grab`; there is no reason to guess.
 - `cargo build --release` and `cargo test --release` stay **clean, warnings
   included.**
