@@ -5,14 +5,18 @@ port is, what state it's in, the decisions that aren't obvious from the code,
 and the traps that will cost you an hour if nobody warns you.
 
 **Branch:** `windows-port` on `github.com/scythe000/NTSCRT` (a fork of
-`finnmckenty/NTSCRT`). 30 commits, ~12,000 lines of Rust/WGSL under `windows/`
+`finnmckenty/NTSCRT`). 45 commits, ~13,000 lines of Rust/WGSL under `windows/`
 plus the release workflow in `.github/`. Everything below is pushed.
 
 The first 14 commits built the port headlessly. The next batch was a second
 pass with a screen: the GUI was run on a Linux desktop, looked at, and fixed,
-and the original "where to go next" list was done. The latest pass closed the
+and the original "where to go next" list was done. The third pass closed the
 feature gaps against the macOS app found by reading its source side by side
-(§2, "Parity with the macOS app").
+(§2, "Parity with the macOS app"). The latest pass is the first to go
+*beyond* the Mac: a colour-grade stage with its own panel and presets, and
+ffmpeg bundled in the zip. The owner has said cross-compatibility with the
+macOS app is no longer a constraint — this is now its own program — but the
+grade was still added in a way that keeps preset files loadable both ways.
 
 ---
 
@@ -24,8 +28,11 @@ emulation) and then RetroArch's CRT shaders via
 [librashader](https://github.com/SnowflakePowered/librashader).
 
 ```
-source → rotate → NTSC/VHS degradation (full res, CPU) → downscale → CRT shader → output
+source → rotate → NTSC/VHS degradation (full res, CPU) → downscale → colour grade → CRT shader → output
 ```
+
+The colour grade is this build's own stage; everything else is the Mac's
+chain.
 
 The original is a **macOS SwiftUI/Metal app** in `Sources/`. This is a
 **Windows rewrite** in `windows/`, not a port of the Swift.
@@ -59,7 +66,7 @@ counterpart in its header comment. Port *behaviour*, not frameworks.
 | Video decode / playback / frame cache | ✅ verified 24.2fps, 0 drops |
 | MP4 / HEVC / ProRes 422 / ProRes 422 HQ / GIF export | ✅ verified with ffprobe |
 | Rotation (90/180/270) | ✅ verified stills + video + export |
-| App presets (load/save, 17 bundled) | ✅ all parse, format compatible |
+| App presets (load/save, 25 bundled) | ✅ all parse, format compatible |
 | Keyframe timeline + interpolation | ✅ verified numerically |
 | Timeline bar UI | ✅ looked at and driven on a Linux desktop (see below) |
 | Keyframes animating during video playback / scrub | ✅ verified on screen |
@@ -76,8 +83,11 @@ counterpart in its header comment. Port *behaviour*, not frameworks.
 | Preview pacing (timeline at its fps, Animate at 30) | ✅ on screen: readout advances 0.5 s per 0.5 s |
 | Preset load is a clean slate, incl. on a playing video | ✅ on screen: Glitch 1 → Clean VHS mid-playback |
 | No VC++ Redistributable needed (crt-static) | ✅ CI check in `package.ps1` passes; `objdump -p` on the artifact shows no MSVCP140 / VCRUNTIME140 imports |
+| Colour-grade stage (`ntscrt-core/src/grade.rs`, `gpu/grade.{rs,wgsl}`, `ui/grade_panel.rs`) | ✅ GPU pass matches the CPU reference within 0.5/255; panel driven on screen; keyframes and presets carry it |
+| Eight colour presets (B&W, Solarized, Inverted, Blade Runner, Max Headroom, Neon, Red/Cyan highlight) | ✅ smoke-rendered side by side and loaded in the GUI; a pre-grade preset loaded after one turns the stage off |
+| ffmpeg bundled beside the exe (pinned build, SHA-256 checked) | ✅ `package.ps1` run here with pwsh: digest ok, 190 MB staged, 147 MB zip; lookup order unit-checked with `ntscrt-smoke --ffmpeg` |
 
-**159 tests, zero warnings.** 54 in `ntscrt-core`, 105 in `ntscrt-app`.
+**171 tests, zero warnings.** 62 in `ntscrt-core`, 109 in `ntscrt-app`.
 
 ### Parity with the macOS app
 
@@ -137,12 +147,19 @@ from the workflow is the thing to run first.
 - **Not run on Windows since the GUI pass** — see above.
 - **Zip only.** No installer, no code signing. SmartScreen will warn on an
   unsigned download.
-- **ffmpeg is not bundled.** The README tells the user to install it; the
-  app reports clearly when it's missing.
-- **HEIC needs ffmpeg ≥ 7.1.** The `image` crate has no HEIC/AVIF decoder,
-  so those go through ffmpeg; HEIF demuxing landed in 7.1 (this VM's 6.1
-  fails with a message naming the version). Current Windows builds from
-  gyan.dev / BtbN are well past that.
+- **The bundled ffmpeg has not been run on Windows yet.** `package.ps1` was
+  exercised here under pwsh (download, digest, staging, licence files) but
+  the "is the staged copy the one resolved" check only runs on Windows,
+  where the `.exe` can execute. The next CI run on `windows-latest` is the
+  first real test; read its Package step.
+- **The grade runs after the signal stage only.** A "grade before NTSC"
+  switch (so the tape records an already-tinted picture) was considered and
+  left out: it would need a CPU implementation inside the playback
+  producer, per-frame keyframe plumbing there, and cache invalidation on
+  every colour edit — for a look that after-NTSC grading approximates
+  closely. Add it only if someone asks for it.
+- **HEIC needs ffmpeg ≥ 7.1.** The bundled 8.1.2 has it; a PATH copy older
+  than that fails with a message naming the version.
 - **`** CRT-HYLLIAN **`-style headers with no parameters under them** show
   as an empty collapsible section. The Mac does the same.
 - **Not frame-identical to the Mac build,** and can't be. macOS pins
@@ -164,6 +181,7 @@ windows/
     downscale.rs          method + spec model
     scanline.rs           supersample / snap math  (ScanlineGrid.swift)
     rotation.rs           quarter turns            (Windows addition)
+    grade.rs              colour-grade model + CPU reference (Windows addition)
     timeline.rs           keyframes + interpolation (Timeline.swift)
     settings_ui.rs        re-exports ntsc-rs's settings schema
   ntscrt-app/
@@ -171,14 +189,15 @@ windows/
       downscale.wgsl      the MSL kernels from Downscaler.swift, transliterated
       downscaler.rs       wgpu side of the downscale stage
       chain.rs            librashader filter chain (replaces LibrashaderBridge.m)
+      grade.wgsl/.rs      colour-grade compute pass (Windows addition)
       pipeline.rs         frame orchestration       (Pipeline.swift)
     video/
-      ffmpeg.rs           subprocess plumbing
+      ffmpeg.rs           subprocess plumbing; tool lookup (beside exe → PATH)
       source.rs           decode / VideoSource      (VideoSource.swift)
       playback.rs         background producer       (PlaybackPipeline.swift)
       cache.rs            RAM preview               (ChainInputCache.swift)
       export.rs           MP4 / ProRes / GIF        (Mp4Exporter + GifExporter)
-    ui/                   egui panels               (Views/*.swift)
+    ui/                   egui panels               (Views/*.swift); grade_panel.rs has no Swift twin
     app.rs                state + eframe shell      (AppState.swift)
     app_video.rs          video half of AppState
     app_timeline.rs       keyframe half of AppState
@@ -186,6 +205,8 @@ windows/
     param_gates.rs        shader param gating       (ParamGates.swift)
     render.rs             HeadlessRenderer, FrameSequence — the export path
     bin/smoke.rs          ntscrt-smoke, the headless verifier
+  ffmpeg-bundle.json      the pinned ffmpeg build package.ps1 ships
+  package.ps1             stage + zip, incl. the ffmpeg download and checks
     build.rs              .ico from Assets/icon-source.png + DPI manifest (Windows only)
   package.ps1             stage + zip a release; also what CI runs
 .github/workflows/windows.yml   build, test, package; release on v* tags
@@ -381,6 +402,62 @@ The `"version": 1` format is shared with the macOS build and files move both
 ways. Rotation was added as a top-level `rotation` key in degrees — Swift's
 decoder ignores keys it doesn't know, so that's safe. **Don't restructure the
 format.** If you add a field, add it optional with a default.
+
+The grade followed the same rule even though the owner has released the
+Mac constraint: `grade` is an optional top-level section (`{enabled,
+params}`), not written when it is the default, and keyframes carry an
+optional `grade` map that is skipped when empty. A pre-grade preset loads
+with the stage off; a graded preset loads on the Mac with the section
+ignored.
+
+### The grade is one flat parameter set, on the chain input
+
+`ntscrt_core::grade` defines the controls as a table (`GRADE_PARAMS`: name,
+label, range, default, step) and the stage's state as `Grade { enabled,
+values: BTreeMap<String, f32> }`. Flat named floats — the same shape as
+shader parameters — so keyframes interpolate them, presets store them and
+the panel renders them without any per-control code. Colours are three
+floats apiece for the same reason; the panel turns them into colour
+pickers. The kept hue for the colour highlight is stored as an *angle on
+the NTSC I/Q plane*, which is what the shader compares hues on; the panel
+shows a swatch at that angle and reads an angle back from whatever is
+picked (`colour_for_hue` / `hue_for_colour`, radius chosen so no channel
+clips, else the angle wouldn't round-trip).
+
+The pass runs on the chain input — after NTSC and the downscale, before the
+CRT — as one compute shader (`gpu/grade.wgsl`). That position was chosen
+for three reasons: a tint reads as the *set* being lit that way; a
+selective-colour highlight stays clean instead of being smeared by chroma
+noise; and it is downstream of everything the video frame cache stores, so
+a colour edit costs one chain-input-sized pass and invalidates nothing
+(`set_grade_param` calls `mark_dirty`, not `mark_chain_input_edited`).
+`Pipeline` records `last_chain_input` *before* the grade, so the cache
+keeps ungraded frames.
+
+`grade_pixel` in `ntscrt-core` is a CPU reference of the shader, same math
+in the same order. It is what the unit tests check presets against, and
+the GPU was checked against it with a throwaway comparison (max 0.5/255).
+**If you change one, change the other.** `RenderRequest::grade` is
+`Option<[f32; 20]>`; callers pass `None` when `Grade::is_identity()`, so
+every pre-grade preset skips the pass entirely.
+
+### ffmpeg is bundled, pinned and verified
+
+`video/ffmpeg.rs` resolves each tool as: `NTSCRT_FFMPEG`/`NTSCRT_FFPROBE`
+override → a copy **beside our own executable** → the bare name on PATH.
+The zip puts ffmpeg there. `package.ps1` reads `ffmpeg-bundle.json` (BtbN
+release tag, asset name, SHA-256), downloads to `target/ffmpeg-bundle/`
+(cached across runs), refuses a digest mismatch, and stages `bin/` minus
+`ffplay.exe` plus `licenses/FFmpeg-LICENSE.txt` and a notice. It is the
+*shared* GPL build: `ffmpeg.exe`/`ffprobe.exe` are small and the codecs are
+in `av*.dll`, about half the size of the static build; GPL because the
+H.264/HEVC exports use libx264/libx265, which the LGPL variant lacks. ffmpeg
+is run as a separate process, so the app's own licence is unaffected. On
+Windows the script then runs `ntscrt-smoke --ffmpeg` from the staged folder
+and requires both tools to report "bundled beside the app". `-NoFFmpeg`
+skips all of it. To upgrade, change the three fields in the JSON — pick a
+dated `autobuild-*` release, not the rolling `latest`, or the digest will
+drift.
 
 ### On a video, the timeline *replaces* the transport bar
 
@@ -642,8 +719,31 @@ is done. What's left, roughly in order of value:
    (`chainCache`) so switching back is instant; Windows recompiles
    (crt-royale takes a couple of seconds). Parameter values already survive
    the switch, so this is purely time.
+7. **An About box with the version.** The owner asked for it (they had no
+   way to tell which build they were running). `env!("CARGO_PKG_VERSION")`
+   plus the git hash from `build.rs`, in a menu next to Preset.
+8. **More grade controls, if wanted.** Candidates: posterize, vignette,
+   a "grade before the signal stage" switch (see Known gaps for its cost),
+   and a proper HSV hue for the colour highlight instead of the I/Q angle.
 
 ---
+
+### The grade has a CPU twin — keep them in step
+
+`gpu/grade.wgsl` and `ntscrt_core::grade::grade_pixel` are the same
+function twice. The tests only see the CPU one. A change to the shader that
+isn't mirrored passes every test and silently renders differently from what
+the presets were tuned against. Check with the smoke tool: render with
+`--no-ntsc --no-shader --downscale off` (pixels map 1:1) with and without a
+`--grade`, and compare against `grade_pixel` on the ungraded PNG.
+
+### The I/Q hue is not an HSV hue
+
+The colour highlight's `keep_hue` is an angle on the NTSC I/Q chroma plane.
+Orange sits on the +I axis (~0°), red at ~20°, so a red band 30° wide
+catches orange too. That is by design (it's how the TV sees colour) but it
+surprises anyone expecting HSV degrees. The panel hides the number behind a
+swatch for this reason.
 
 ## 8. Working agreements that produced this code
 

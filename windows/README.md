@@ -38,14 +38,14 @@ last are facts about the shaders, not about the platform.
 
 - Windows 10 1809 or later (the D3D12 backend needs render passes), x64
 - A GPU with D3D12 or Vulkan drivers
-- [ffmpeg](https://ffmpeg.org/download.html) on PATH for video — decoding,
-  playback and export all go through it. PNG/JPEG/BMP/TIFF/WebP stills need
-  nothing extra; HEIC and AVIF stills are decoded through ffmpeg too (HEIC
-  needs 7.1 or newer).
 
 Nothing else: no runtime to install. The C++ runtime is linked into the
-executable, so the zip runs on a clean Windows install; stills work with no
-ffmpeg at all.
+executable, and the zip ships its own ffmpeg (a pinned build, see
+[Package](#package)), which handles video decoding, playback and export and
+HEIC/AVIF stills. PNG/JPEG/BMP/TIFF/WebP stills need nothing at all. If you
+build from source instead, put [ffmpeg](https://ffmpeg.org/download.html)
+7.1 or newer on PATH for video and HEIC, or drop `ffmpeg.exe` and
+`ffprobe.exe` beside `ntscrt.exe` — that is where the app looks first.
 
 Building additionally needs:
 
@@ -56,8 +56,8 @@ Building additionally needs:
 
 Download `NTSCRT-<version>-windows-x64.zip` from the
 [releases](https://github.com/scythe000/NTSCRT/releases), unzip it anywhere,
-run `ntscrt.exe`. The folder is self-contained — `shaders/` and `presets/`
-sit beside the executable — apart from ffmpeg, which you install yourself.
+run `ntscrt.exe`. The folder is self-contained: `shaders/`, `presets/`,
+`ffmpeg.exe`/`ffprobe.exe` and their DLLs all sit beside the executable.
 
 The zip holds two programs. `ntscrt.exe` is the app. `ntscrt-smoke.exe` is
 a command-line tool that runs the same pipeline without a window — it
@@ -98,8 +98,19 @@ pwsh windows/package.ps1        # tests, builds, stages and zips
 ```
 
 Produces `windows/dist/NTSCRT-<version>-windows-x64.zip` with both binaries,
-the shader tree, the presets and this README, after checking that the seven
-shaders resolve from the staged folder. The same script runs in CI: the
+the shader tree, the presets, this README and ffmpeg, after checking that the
+seven shaders resolve from the staged folder and that the staged ffmpeg is the
+one the app finds. The ffmpeg is a pinned build — release tag, asset name and
+SHA-256 in `ffmpeg-bundle.json` — downloaded from
+[BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds), verified, and
+staged as `ffmpeg.exe`, `ffprobe.exe` and the `av*`/`sw*` DLLs (the shared
+build; the static one is twice the size). It is a GPL build because the
+H.264/HEVC exports use libx264/libx265; the app runs it as a separate
+program, and its licence and a notice ship in `licenses/`. `-NoFFmpeg` leaves
+it out. Bundling roughly doubles the zip, to about 150 MB; in return the app
+runs on a machine with nothing installed, and every install decodes and
+encodes with the same ffmpeg (an old PATH copy would silently lose HEIC). To
+move to a newer ffmpeg, change the three fields in `ffmpeg-bundle.json`. The same script runs in CI: the
 [Windows workflow](../.github/workflows/windows.yml) builds, tests and
 packages on every push and pull request, uploading the zip as an artifact,
 and attaches it to a GitHub Release when a `v*` tag is pushed.
@@ -120,11 +131,13 @@ Alt+scroll over the preview, which zooms about the cursor) magnifies; drag
 the preview or a click on the percentage resets both. While a video exports,
 the Export button becomes a progress bar with a **Cancel** beside it.
 
-**Presets** — save or load your entire configuration (downscale, NTSC, shader
-and every shader parameter) as JSON, with the 17 bundled presets listed
+**Presets** — save or load your entire configuration (downscale, NTSC, colour
+grade, shader and every shader parameter) as JSON, with the 25 bundled presets listed
 underneath, with a tick against the loaded one that clears as soon as you
 change anything it controls. Eight of them are keyframe-animated and play
-their animation. Loading a preset turns **Animate** on whatever
+their animation; eight are colour looks built on the grade stage (*Black &
+white*, *Solarized*, *Inverted*, *Blade Runner*, *Max Headroom*, *Neon*,
+*Red highlight*, *Cyan highlight*). Loading a preset turns **Animate** on whatever
 the preset itself stores: these looks are built out of tape noise and
 tracking error, and frozen on one frame a preset shows you a still that
 happens to be noisy rather than the effect it is for. The format is the
@@ -136,7 +149,8 @@ silent, to the default — nothing from the previous preset or from your own
 tweaks carries over, and on a video the switch shows immediately rather
 than after the cached frames run out.
 
-**Sidebar** — the creative pipeline, top to bottom in signal order:
+**Sidebar** — the creative pipeline, top to bottom in signal order
+(source → NTSC → downscale → colour grade → CRT shader → export):
 
 - **Source** — the loaded file, and **Rotate** (also the toolbar button, or
   Ctrl+R). Rotation is applied before the effect, so a portrait clip turned
@@ -157,6 +171,18 @@ than after the cached frames run out.
   emulation › Edge wave*, *Scale*, …) — a preset that only changes those
   looks different in the preview without anything at the top of the panel
   moving.
+- **Colour** — a grade on the degraded, downscaled picture before the CRT
+  draws it: saturation (0 is black and white), contrast, brightness, gamma
+  and hue shift; a **Tint** that pulls shadows and highlights toward two
+  colours of your choosing (teal and amber for the Blade Runner look);
+  **Colour highlight**, which keeps one colour and greys everything else
+  (pick the colour, set how wide a band around it counts); and **Solarize**
+  and **Invert**. Every control keyframes like the rest, so a picture can
+  drain to black and white or flip negative over a loop. The grade runs after
+  everything the video frame cache stores, so dialling a colour on a playing
+  clip does not restart it. This stage is this build's own — the macOS app
+  does not have it; a preset saved with a grade loads there with the section
+  ignored.
 - **CRT** — the seven bundled RetroArch presets with their runtime parameters,
   in the order the shader author declared them, under the author's own section
   headers. Each control is chosen from the parameter's declaration, as on the
@@ -230,6 +256,13 @@ rule of thumb, crisp scanlines want 3+ output rows per downscale line.
 .\target\release\ntscrt-smoke.exe --list-shaders          # which shaders resolve here
 .\target\release\ntscrt-smoke.exe --list-presets          # bundled presets and what they set
 .\target\release\ntscrt-smoke.exe --list-params royale    # a shader's parameters, ranges and defaults
+.\target\release\ntscrt-smoke.exe --list-grade            # the colour-grade controls
+.\target\release\ntscrt-smoke.exe --ffmpeg                # which ffmpeg/ffprobe the app will run, and from where
+```
+
+```powershell
+# Colour grade: any control, repeatable; turns the stage on
+.\target\release\ntscrt-smoke.exe input.png out.png --preset "Mild VHS" --grade saturation=0 --grade contrast=1.1
 ```
 
 ```powershell
@@ -242,7 +275,8 @@ rule of thumb, crisp scanlines want 3+ output rows per downscale line.
 ```
 
 `--preset`, `--shader`, `--downscale <px|off>`, `--method`, `--height`,
-`--snap`, `--no-ntsc`, `--ntsc-preset <file>`, `--frame <n>`, plus the video
+`--snap`, `--no-ntsc`, `--no-shader`, `--grade name=value`, `--ntsc-preset <file>`,
+`--frame <n>`, plus the video
 flags above. Flags after `--preset` override it, so a preset works as a
 starting point.
 
@@ -255,15 +289,21 @@ checking that a shader's metadata reaches the UI.
 The app looks for the shader tree beside the executable (`shaders/`) and then
 walks up to find `Vendor/slang-shaders`, so it works from both an install and
 a source checkout. Override with `NTSCRT_SHADERS`; `NTSCRT_PRESETS` does the
-same for the bundled `presets/` JSON.
+same for the bundled `presets/` JSON. ffmpeg and ffprobe are looked for
+beside the executable first (the zip puts them there), then on PATH;
+`NTSCRT_FFMPEG` and `NTSCRT_FFPROBE` point at a specific executable.
 
 ## Differences from the macOS build
 
+- **A colour-grade stage.** Between the downscale and the CRT shader, with
+  its own **Colour** panel and eight presets built on it (see above). Presets
+  carry it in a `grade` section the macOS build ignores; presets without one
+  load here with the stage off. Keyframes carry a `grade` map the same way.
 - **HEIC goes through ffmpeg.** The `image` crate covers PNG/JPEG/BMP/TIFF/
   WebP and has no HEIC or AVIF decoder, so those stills are decoded as a
   one-frame clip by the same ffmpeg video needs. HEIC demuxing arrived in
-  ffmpeg 7.1; an older ffmpeg fails with a message saying so. The macOS build
-  gets HEIC free from ImageIO.
+  ffmpeg 7.1; the bundled build has it, and an older ffmpeg from PATH fails
+  with a message saying so. The macOS build gets HEIC free from ImageIO.
 - **Not frame-identical to the Mac build.** The macOS build pins librashader to
   76462c03 because later versions shifted crt-royale's output; that pin is
   Metal-specific. This uses librashader 0.12 on its wgpu runtime, so
@@ -277,8 +317,14 @@ On an RTX 3090 (Vulkan backend):
 
 - All seven bundled CRT presets render.
 - All six downscale kernels produce distinct, correct output.
-- All 17 bundled app presets parse and render; "Clean CRT" and "Obliterated"
-  produce the crisp and destroyed looks their names promise.
+- All 25 bundled app presets parse and render; "Clean CRT" and "Obliterated"
+  produce the crisp and destroyed looks their names promise. The eight colour
+  looks were rendered side by side on a night-city test frame: black and
+  white is grey, inverted is a negative, the two highlights keep only their
+  colour, Blade Runner is teal and amber.
+- The grade's GPU pass matches its CPU reference (`grade_pixel`) within
+  0.5/255 across invert, a mixed grade (hue shift, saturation, contrast,
+  gamma, tint, solarize) and the colour highlight.
 - Every rule in `param_gates.rs` names a parameter that exists in the real
   shaders (checked against `--list-params` for all seven).
 - crt-royale, 320×240 → 1280×960, in 1.9s.
@@ -297,7 +343,7 @@ On an RTX 3090 (Vulkan backend):
 - A HEIC still renders through ffmpeg 7.0 (320×240 in, 1280×960 out), an
   AVIF through ffmpeg 6.1, and ffmpeg 6.1 refuses the HEIC with a message
   naming the version it needs.
-- 159 tests pass (`cargo test --release`), no warnings.
+- 171 tests pass (`cargo test --release`), no warnings.
 
 On a Linux desktop (X11, Mesa's software Vulkan driver — a verification
 target, not a shipping one), driving the window with `xdotool` and reading
@@ -314,6 +360,9 @@ and back. 'Wavy loop' and 'Very wavy' load with their edge-wave values in
 place (the settings they change live in collapsed groups), and 'Very wavy'
 plays its loop in real time — the readout advances 0.5 s per 0.5 s of wall
 clock, flat at its end keys and clearly wavier than 'Gentle waves loop'
-through the middle. It has not been
-run on a Windows desktop since these changes; the packaged zip is what the
-workflow builds there.
+through the middle. The Colour panel enables, drags saturation to 0 and the
+preview goes black and white through the CRT shader; loading 'Blade Runner'
+tints the preview and fills the panel with its values, and loading 'Clean
+CRT' after it turns the grade off and returns every control to neutral.
+It has not been run on a Windows desktop since these changes; the packaged
+zip is what the workflow builds there.
