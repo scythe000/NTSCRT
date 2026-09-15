@@ -29,6 +29,7 @@ USAGE:
     ntscrt-smoke --list-shaders
     ntscrt-smoke --list-params [shader-id]
     ntscrt-smoke --list-grade
+    ntscrt-smoke --ffmpeg
     ntscrt-smoke --list-presets
     ntscrt-smoke --timeline <preset> [--watch <ntsc-setting>]
     ntscrt-smoke --video-info <file>
@@ -233,7 +234,10 @@ fn run_playback(
 /// misbehaves on a machine.
 fn print_video_info(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     match ntscrt_app::video::ffmpeg::probe_tools() {
-        Ok(version) => println!("ffmpeg:  {version}"),
+        Ok(version) => {
+            let (_, source) = ntscrt_app::video::ffmpeg::resolve_tool("NTSCRT_FFMPEG", "ffmpeg");
+            println!("ffmpeg:  {version} ({})", source.describe());
+        }
         Err(e) => return Err(e.into()),
     }
     let video = VideoSource::open(path)?;
@@ -382,6 +386,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 "unbounded".to_string()
             };
             println!("  {:<34} {:<28} = {:<10} {}", p.name, kind, p.initial, p.description);
+        }
+        return Ok(());
+    }
+    if args.first().is_some_and(|a| a == "--ffmpeg") {
+        // Which ffmpeg/ffprobe the app will launch, and from where. The
+        // packaging script runs this from the staged folder to prove the
+        // bundled copy is the one found, not something on PATH.
+        use ntscrt_app::video::ffmpeg::{probe_tools, resolve_tool};
+        for (var, name) in [("NTSCRT_FFMPEG", "ffmpeg"), ("NTSCRT_FFPROBE", "ffprobe")] {
+            let (path, source) = resolve_tool(var, name);
+            println!("{name:8} {} ({})", path.display(), source.describe());
+        }
+        match probe_tools() {
+            Ok(version) => println!("version  {version}"),
+            Err(e) => return Err(e.into()),
         }
         return Ok(());
     }

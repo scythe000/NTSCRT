@@ -1,0 +1,18 @@
+{
+  "_comment": [
+    "The ffmpeg build package.ps1 ships beside ntscrt.exe. A pinned, dated",
+    "autobuild from BtbN/FFmpeg-Builds rather than the rolling 'latest' asset,",
+    "so the zip is reproducible and the digest below can be checked. The",
+    "'shared' variant is used: small ffmpeg.exe/ffprobe.exe plus the av*.dll",
+    "libraries, about half the size of the static build. 'gpl' because the",
+    "app's H.264/HEVC exports use libx264/libx265, which the LGPL build lacks.",
+    "To move to a newer build: pick an asset from",
+    "https://github.com/BtbN/FFmpeg-Builds/releases, and copy its name and",
+    "sha256 digest from the release page here."
+  ],
+  "release": "autobuild-2026-09-14-13-17",
+  "asset": "ffmpeg-n8.1.2-52-g5a03dfa0f6-win64-gpl-shared-8.1.zip",
+  "sha256": "0bbe394cd842944b25d43d7ab3644e94d4f4f4ce121bf9fffdd097807eb2d102",
+  "version": "8.1.2",
+  "license": "GPL-3.0-or-later"
+}

@@ -11,8 +11,14 @@
 //!   none of which a `cargo build` can assume on Windows;
 //! - the pipeline only ever wants whole RGBA frames, which is exactly what
 //!   `-f rawvideo -pix_fmt rgba` hands over, so the binding would buy nothing;
-//! - ffmpeg ships as a standalone executable everywhere, so an install is a
-//!   file on PATH rather than a redistribution problem.
+//! - ffmpeg ships as a standalone executable everywhere, so it can sit
+//!   beside ours in the zip (see `package.ps1`) or come from PATH.
+//!
+//! Lookup order, per tool: the `NTSCRT_FFMPEG` / `NTSCRT_FFPROBE` override;
+//! then a copy **beside our own executable**, which is what the packaged zip
+//! ships (a pinned build, so decoding and encoding behave the same on every
+//! machine and HEIC works regardless of what else is installed); then the
+//! bare name, i.e. whatever PATH has, for source-tree runs.
 //!
 //! The cost is one process per decode/encode session and a pipe copy per
 //! frame. At the frame sizes this app works with, the NTSC stage is still two
@@ -24,7 +30,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
 /// Set `NTSCRT_FFMPEG` / `NTSCRT_FFPROBE` to a full executable path to
-/// override the PATH lookup — the counterpart of `NTSCRT_SHADERS`.
+/// override the lookup — the counterpart of `NTSCRT_SHADERS`.
 pub fn ffmpeg_path() -> PathBuf {
     tool_path("NTSCRT_FFMPEG", "ffmpeg")
 }
@@ -33,11 +39,52 @@ pub fn ffprobe_path() -> PathBuf {
     tool_path("NTSCRT_FFPROBE", "ffprobe")
 }
 
-fn tool_path(var: &str, default: &str) -> PathBuf {
-    match std::env::var(var) {
-        Ok(p) if !p.trim().is_empty() => PathBuf::from(p),
-        _ => PathBuf::from(default),
+/// Where a tool comes from, for the status line and the packaging check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolSource {
+    /// `NTSCRT_FFMPEG` / `NTSCRT_FFPROBE`.
+    Override,
+    /// Beside our own executable — the copy the zip ships.
+    Bundled,
+    /// The bare name, resolved by the OS through PATH.
+    Path,
+}
+
+impl ToolSource {
+    pub fn describe(self) -> &'static str {
+        match self {
+            ToolSource::Override => "from NTSCRT_FFMPEG/NTSCRT_FFPROBE",
+            ToolSource::Bundled => "bundled beside the app",
+            ToolSource::Path => "from PATH",
+        }
     }
+}
+
+/// The path a tool will be launched by and why. `default` is the bare name
+/// (`ffmpeg`); the executable suffix is added where the OS needs one.
+pub fn resolve_tool(var: &str, default: &str) -> (PathBuf, ToolSource) {
+    if let Ok(p) = std::env::var(var) {
+        if !p.trim().is_empty() {
+            return (PathBuf::from(p), ToolSource::Override);
+        }
+    }
+    if let Some(p) = beside_executable(default) {
+        return (p, ToolSource::Bundled);
+    }
+    (PathBuf::from(default), ToolSource::Path)
+}
+
+fn tool_path(var: &str, default: &str) -> PathBuf {
+    resolve_tool(var, default).0
+}
+
+/// `<dir of our exe>/<name>[.exe]`, when such a file exists.
+fn beside_executable(name: &str) -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let file = if cfg!(windows) { format!("{name}.exe") } else { name.to_string() };
+    let candidate = dir.join(file);
+    candidate.is_file().then_some(candidate)
 }
 
 /// Whether both tools can be launched, with the version string when they can.
@@ -53,8 +100,9 @@ pub fn probe_tools() -> Result<String, String> {
             .output()
             .map_err(|e| {
                 format!(
-                    "{name} could not be run ({e}). Install ffmpeg and put it on PATH, \
-                     or set NTSCRT_{} to the executable.",
+                    "{name} could not be run ({e}). Put {name}.exe beside ntscrt.exe (the \
+                     release zip ships it), install ffmpeg on PATH, or set NTSCRT_{} to \
+                     the executable.",
                     name.to_uppercase()
                 )
             })?;
