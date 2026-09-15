@@ -74,7 +74,7 @@ counterpart in its header comment. Port *behaviour*, not frameworks.
 | HEIC / AVIF stills via ffmpeg | ✅ smoke-rendered with ffmpeg 7.0 (HEIC) and 6.1 (AVIF) |
 | Edits while parked on a keyframe rewrite that key | ✅ on screen |
 
-**155 tests, zero warnings.** 54 in `ntscrt-core`, 101 in `ntscrt-app`.
+**159 tests, zero warnings.** 54 in `ntscrt-core`, 105 in `ntscrt-app`.
 
 ### Parity with the macOS app
 
@@ -353,6 +353,24 @@ these looks are built from tape noise and tracking error, and frozen on one
 frame a preset shows a still that happens to be noisy rather than the effect
 it's for. The flag still round-trips on save; it just doesn't decide what you
 see.
+
+### The preview's animations are paced by the clock, not the repaint
+
+egui repaints as fast as the display allows. The timeline preview and
+Animate used to advance one step per repaint, which tied their speed to the
+monitor: a 2-second keyframe loop ran in 0.8 s at 60 Hz and 0.33 s at 144 Hz
+(and crawled under lavapipe). That's what made 'Very wavy' look *less* wavy
+than 'Gentle waves loop' — its wave is keyed from flat (both end keys are
+the Clean-VHS values, `vhs_edge_wave` 0.5 at `bandwidth_scale` 0.3) up to a
+peak mid-loop, and at that speed the peak was a flicker. `pacer.rs` now
+schedules both the way the macOS app does: the timeline at its own fps
+(`Task.sleep` to `timelineFPS` in `AppState.toggleTimelinePreview`), Animate
+capped at 30 fps with NTSC on and 60 off (`preferredFramesPerSecond` in
+`PreviewView`). Repaints are requested for when the next frame is due, so an
+idle 24 fps loop no longer burns a CPU core repainting. When judging the
+edge wave, remember ntsc-rs scales its shift by `bandwidth_scale`
+(`intensity × 0.5 × horizontal_scale`), so compare the *product*: Gentle
+waves is 6.3 × 0.39 ≈ 2.5 throughout, Very wavy peaks at 7.3 × 0.83 ≈ 6.1.
 
 ### Preset compatibility is a constraint, not a nicety
 

@@ -97,7 +97,9 @@ and attaches it to a GitHub Release when a `v*` tag is pushed.
 **Toolbar** — **Open** (Ctrl+O) an image or video, **Export** (Ctrl+E), the
 **Preset** menu, and the view controls. **Animate** runs the preview
 continuously so tape noise, jitter and interlacing actually move — leave it on
-for the real experience. **Compare** splits the preview: full pipeline left of
+for the real experience. It runs at 30 fps (NTSC's own rate) regardless of
+your monitor's refresh rate, as does the timeline preview at the timeline's
+fps, so a 2-second loop takes 2 seconds. **Compare** splits the preview: full pipeline left of
 the line, untouched source right; drag the line to move the split. **Integer
 scale** locks the preview to a whole multiple of the downscale so every
 scanline is the same height on screen, letterboxing the rest. **Zoom** (or
@@ -279,7 +281,7 @@ On an RTX 3090 (Vulkan backend):
 - A HEIC still renders through ffmpeg 7.0 (320×240 in, 1280×960 out), an
   AVIF through ffmpeg 6.1, and ffmpeg 6.1 refuses the HEIC with a message
   naming the version it needs.
-- 155 tests pass (`cargo test --release`), no warnings.
+- 159 tests pass (`cargo test --release`), no warnings.
 
 On a Linux desktop (X11, Mesa's software Vulkan driver — a verification
 target, not a shipping one), driving the window with `xdotool` and reading
@@ -293,6 +295,9 @@ were checked against CRT Hyllian; the shader toggle shows the signal stage
 as hard blocks; NTSC Reset and clipboard Paste both put a dragged slider
 back; a parameter edited while parked on a keyframe survives jumping away
 and back. 'Wavy loop' and 'Very wavy' load with their edge-wave values in
-place (the settings they change live in collapsed groups). It has not been
+place (the settings they change live in collapsed groups), and 'Very wavy'
+plays its loop in real time — the readout advances 0.5 s per 0.5 s of wall
+clock, flat at its end keys and clearly wavier than 'Gentle waves loop'
+through the middle. It has not been
 run on a Windows desktop since these changes; the packaged zip is what the
 workflow builds there.
