@@ -75,7 +75,7 @@ counterpart in its header comment. Port *behaviour*, not frameworks.
 | Edits while parked on a keyframe rewrite that key | ✅ on screen |
 | Preview pacing (timeline at its fps, Animate at 30) | ✅ on screen: readout advances 0.5 s per 0.5 s |
 | Preset load is a clean slate, incl. on a playing video | ✅ on screen: Glitch 1 → Clean VHS mid-playback |
-| No VC++ Redistributable needed (crt-static) | ⏳ CI check in `package.ps1`; confirm with `objdump -p` on the artifact |
+| No VC++ Redistributable needed (crt-static) | ✅ CI check in `package.ps1` passes; `objdump -p` on the artifact shows no MSVCP140 / VCRUNTIME140 imports |
 
 **159 tests, zero warnings.** 54 in `ntscrt-core`, 105 in `ntscrt-app`.
 
