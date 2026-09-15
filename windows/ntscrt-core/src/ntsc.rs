@@ -13,6 +13,8 @@
 //! Windows the caller owns the staging buffer).
 
 use ntsc_rs::settings::standard::NtscEffectFullSettings;
+#[cfg(test)]
+use ntsc_rs::settings::standard::FilterType;
 use ntsc_rs::settings::SettingsList;
 use ntsc_rs::yiq_fielding::{Bgrx, BlitInfo, DeinterlaceMode, Rgbx, YiqView};
 use ntsc_rs::NtscEffect;
@@ -57,13 +59,82 @@ impl Default for NtscStage {
     }
 }
 
+/// The app's house VHS look, overlaid on ntsc-rs's library defaults — the
+/// same dialled-in values as `AppState.appNtscDefaults` in the macOS build,
+/// so both apps open on the same picture and Reset returns to it. Keys are
+/// ntsc-rs setting ids, as in preset JSON.
+///
+/// `head_switching_offset` must stay below `head_switching_height` or the
+/// switch band leaves the frame and the effect goes dead. `bandwidth_scale`
+/// and `vertical_scale` at 0.3 land the whole stage lighter — the raw look
+/// was too aggressive out of the box — and `scale_with_video_size` keeps
+/// artifact sizes tracking the input, which at 1080p+ would otherwise be
+/// proportionally tiny.
+pub const HOUSE_DEFAULTS_JSON: &str = r#"{
+    "filter_type": 1,
+    "composite_preemphasis": 1.106,
+    "composite_noise_intensity": 0.204,
+    "composite_noise_frequency": 0.8576,
+    "composite_noise_detail": 2,
+    "snow_intensity": 0,
+    "video_scanline_phase_shift_offset": 3,
+    "luma_smear": 0.6692,
+    "head_switching_height": 8,
+    "head_switching_offset": 3,
+    "head_switching_horizontal_shift": 41.57,
+    "head_switching_mid_line_jitter": 0.181,
+    "tracking_noise_height": 63,
+    "ringing_power": 5.674,
+    "ringing_scale": 4.935,
+    "luma_noise_intensity": 0.153,
+    "chroma_noise_intensity": 0.201,
+    "chroma_noise_frequency": 0.0777,
+    "chroma_phase_error": 0.016,
+    "chroma_phase_noise_intensity": 0.029,
+    "chroma_delay_horizontal": 2.667,
+    "chroma_delay_vertical": 2,
+    "vhs_chroma_loss": 0.124,
+    "scale_with_video_size": true,
+    "bandwidth_scale": 0.3,
+    "vertical_scale": 0.3
+}"#;
+
 impl NtscStage {
+    /// ntsc-rs's own defaults, untouched.
     pub fn new() -> Self {
         Self {
             settings: NtscEffectFullSettings::default(),
             clean: Vec::new(),
             clean_version: None,
         }
+    }
+
+    /// The house look — what the app starts on and what Reset returns to.
+    pub fn house() -> Self {
+        let mut stage = Self::new();
+        stage
+            .reset_to_house_defaults()
+            .expect("house defaults are a fixed, valid overlay on ntsc-rs defaults");
+        stage
+    }
+
+    /// Replace every setting with the house look. The clean-frame cache is
+    /// kept: it holds the *input*, which settings don't change.
+    pub fn reset_to_house_defaults(&mut self) -> Result<(), NtscError> {
+        // A partial preset can't be loaded directly — ntsc-rs fills missing
+        // keys from its legacy values, not its defaults — so overlay onto a
+        // full default JSON and load that.
+        let defaults = Self::new().settings_json()?;
+        let mut merged: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&defaults)
+            .map_err(|e| NtscError::Process(format!("default settings JSON: {e}")))?;
+        let house: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(HOUSE_DEFAULTS_JSON)
+                .map_err(|e| NtscError::Process(format!("house defaults JSON: {e}")))?;
+        for (k, v) in house {
+            merged.insert(k, v);
+        }
+        let json = serde_json::Value::Object(merged).to_string();
+        self.set_settings_json(&json)
     }
 
     /// Current settings as ntsc-rs preset JSON (`"version": 1`) — the same
@@ -187,6 +258,46 @@ mod tests {
         let json = stage.settings_json().expect("serialize");
         assert!(json.contains("version"));
         stage.set_settings_json(&json).expect("deserialize");
+    }
+
+    #[test]
+    fn house_defaults_change_the_look_and_every_key_is_a_real_setting() {
+        let raw = NtscStage::new();
+        let house = NtscStage::house();
+        let s = house.settings();
+        // Spot-check values that differ from ntsc-rs's own defaults.
+        assert!((s.luma_smear - 0.6692).abs() < 1e-4);
+        assert!((s.composite_sharpening - 1.106).abs() < 1e-4);
+        assert!(matches!(s.filter_type, FilterType::Butterworth));
+        let scale = s.scale.settings.clone();
+        assert!((scale.horizontal_scale - 0.3).abs() < 1e-6);
+        assert!((scale.vertical_scale - 0.3).abs() < 1e-6);
+        assert!(scale.scale_with_video_size);
+        assert_ne!(
+            raw.settings_json().unwrap(),
+            house.settings_json().unwrap(),
+            "the house look must differ from the library defaults"
+        );
+
+        // Every house key must name a setting in this ntsc-rs, or it is
+        // silently ignored and the look drifts from the macOS build's.
+        let defaults: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&raw.settings_json().unwrap()).unwrap();
+        let overlay: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(HOUSE_DEFAULTS_JSON).unwrap();
+        for key in overlay.keys() {
+            assert!(defaults.contains_key(key), "house default '{key}' is not an ntsc-rs setting");
+        }
+    }
+
+    #[test]
+    fn reset_returns_to_the_house_look_after_edits() {
+        let mut stage = NtscStage::house();
+        let before = stage.settings_json().unwrap();
+        stage.settings_mut().luma_smear = 0.0;
+        assert_ne!(stage.settings_json().unwrap(), before);
+        stage.reset_to_house_defaults().unwrap();
+        assert_eq!(stage.settings_json().unwrap(), before);
     }
 
     #[test]
