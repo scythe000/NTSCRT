@@ -644,12 +644,25 @@ impl NtscrtApp {
         self.compare = preset.view.compare;
         self.set_rotation(preset.rotation);
 
-        if preset.has_keyframes() {
+        let keyed = preset.has_keyframes();
+        if keyed {
             let n = preset.timeline.as_ref().map(|t| t.keys.len()).unwrap_or(0);
             notes.push(format!("{n} keyframes"));
         }
         self.timeline = preset.timeline;
-        self.playhead = 0.0;
+        self.timeline_playing = false;
+        // A preset carrying keyframes opens the timeline, whether or not it
+        // was open when the preset was saved — otherwise the animation is
+        // loaded but invisible, and the preset looks like it did nothing.
+        // On a still it also starts previewing, since the animation *is*
+        // the look; a video's transport owns playback.
+        if keyed {
+            self.timeline_open = true;
+            if self.video.is_none() {
+                self.timeline_playing = true;
+            }
+        }
+        self.scrub_timeline(0.0);
 
         self.mark_dirty();
         (!notes.is_empty()).then(|| notes.join(" \u{2014} "))
