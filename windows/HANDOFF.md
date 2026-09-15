@@ -5,7 +5,7 @@ port is, what state it's in, the decisions that aren't obvious from the code,
 and the traps that will cost you an hour if nobody warns you.
 
 **Branch:** `windows-port` on `github.com/scythe000/NTSCRT` (a fork of
-`finnmckenty/NTSCRT`). 47 commits, ~13,000 lines of Rust/WGSL under `windows/`
+`finnmckenty/NTSCRT`). 48 commits, ~13,000 lines of Rust/WGSL under `windows/`
 plus the release workflow in `.github/`. Everything below is pushed.
 
 **Name.** The app is **VHS-Studio**. It started as "NTSCRT for Windows" and
@@ -84,7 +84,8 @@ counterpart in its header comment. Port *behaviour*, not frameworks.
 | Keyframe timeline + interpolation | ✅ verified numerically |
 | Timeline bar UI | ✅ looked at and driven on a Linux desktop (see below) |
 | Keyframes animating during video playback / scrub | ✅ verified on screen |
-| Export progress + cancel | ✅ in the toolbar; cancel leaves no partial file |
+| Export progress + cancel | ✅ in the toolbar, for movies *and* PNGs; cancel leaves no partial file |
+| Threaded file opening with a busy indicator | ✅ on screen: toolbar spinner, preview card, status line; window stays live |
 | Audio on video export | ✅ copied when the container allows, else AAC; looped, cut to length; ffprobe-checked |
 | Preview zoom / pan / integer scale | ✅ pure `frame()` unit-tested + on screen |
 | Icon, DPI manifest, zip, release workflow | ✅ workflow green on `windows-latest`: 130 tests, icon embedded without warnings, 65.8 MB zip artifact |
@@ -102,7 +103,7 @@ counterpart in its header comment. Port *behaviour*, not frameworks.
 | ffmpeg bundled beside the exe (pinned build, SHA-256 checked) | ✅ CI on `windows-latest`: digest ok, staged copy is the one resolved, ffmpeg 8.1.2 runs; 143 MB zip |
 | About box (version, commit, date, GPU, ffmpeg, libraries; Copy; F1) + version in the title + `vhs-studio-smoke --version` | ✅ on screen; report copied to the clipboard |
 
-**173 tests, zero warnings.** 62 in `vhs-studio-core`, 111 in `vhs-studio-app`.
+**176 tests, zero warnings.** 62 in `vhs-studio-core`, 114 in `vhs-studio-app`.
 
 ### Parity with the macOS app
 
@@ -216,6 +217,7 @@ windows/
     ui/                   egui panels               (Views/*.swift); grade_panel.rs has no Swift twin
     app.rs                state + eframe shell      (AppState.swift)
     app_video.rs          video half of AppState
+    app_load.rs           threaded file opening + the poll that applies it
     app_timeline.rs       keyframe half of AppState
     app_preset.rs         preset JSON load/save
     param_gates.rs        shader param gating       (ParamGates.swift)
@@ -232,7 +234,8 @@ windows/
 Two binaries: `vhs-studio.exe` (the app) and `vhs-studio-smoke.exe` (the verifier).
 
 In `ui/`: `mod.rs` holds the toolbar (including `export_control`, the
-button-that-becomes-a-progress-bar), status bar, export panel and the shared
+button-that-becomes-a-progress-bar, and `open_control`, the button that
+gains a spinner while a file opens), status bar, export panel and the shared
 `labelled_slider`; `preview_panel.rs` the preview with its pure `frame()`
 geometry; `timeline_bar.rs` and `transport_bar.rs` the two bottom bars (they
 share `paint_cached_runs` for the cached-frame strip).
@@ -372,6 +375,26 @@ Every rule was checked with `crt-sweep`: the parameter shows ~zero pixel diff
 across its range with the gate closed. These are facts about the shaders, not
 the platform, so they port unchanged. All rule targets were re-validated
 against the real shaders here — every name exists.
+
+### Nothing slow runs on the UI thread — opening included
+
+Opening a video was four subprocesses in a row (`ffmpeg -version`,
+`ffprobe -version`, the probe, the first-frame decode) and opening a big
+still a full decode, all inline in the click handler. On Windows, where a
+process spawn is tens of milliseconds and antivirus can make it far more,
+the window stopped painting for seconds and looked hung. `app_load.rs` now
+does the decode on a thread and hands back plain data (`Loaded`) through a
+channel that `ui()` polls; the UI-thread half (`apply_loaded_image`,
+`apply_loaded_video`) is what the old `load_source`/`load_video` did after
+the decode. The previous picture stays up until the swap. Opening a second
+file while one is in flight replaces the task; the orphaned thread sends
+into a dropped receiver and exits. PNG export got the same treatment — it
+goes through `ExportTask` with `total = 1`, so the toolbar shows it as an
+export and Cancel removes the file if it landed mid-render. What still runs
+on the UI thread per frame is the *preview's* NTSC stage for a still (the
+video path has its producer thread); at 4K that is a few hundred
+milliseconds a frame with Animate on, which is the next thing to move if
+anyone complains.
 
 ### Exports render every frame
 

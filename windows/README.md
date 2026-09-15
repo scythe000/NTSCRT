@@ -146,8 +146,12 @@ scale** locks the preview to a whole multiple of the downscale so every
 scanline is the same height on screen, letterboxing the rest. **Zoom** (or
 Alt+scroll over the preview, which zooms about the cursor) magnifies; drag
 (Space-drag or middle-drag when Compare is on) pans, and a double-click on
-the preview or a click on the percentage resets both. While a video exports,
-the Export button becomes a progress bar with a **Cancel** beside it.
+the preview or a click on the percentage resets both. While anything
+exports — a movie or a PNG — the Export button becomes a progress bar with a
+**Cancel** beside it; while a file is being opened, a spinner with its name
+sits beside **Open** and a card in the middle of the preview says what is
+happening. Neither blocks the window: the previous picture stays up and
+every control keeps working until the new one is ready.
 
 **Presets** — save or load your entire configuration (downscale, NTSC, colour
 grade, shader and every shader parameter) as JSON, with the 25 bundled presets listed
@@ -223,10 +227,11 @@ than after the cached frames run out.
   track is copied when the output container can hold it (AAC, MP3, AC-3 and
   the like into MP4 or MOV; PCM into MOV), and re-encoded to AAC 44.1 kHz
   stereo only when it can't (PCM or Vorbis into MP4) — and is looped with
-  the picture when **Loop** is more than 1; GIFs and stills are silent. Movie
-  exports run on their own thread with progress in the toolbar and the
-  export panel, and can be cancelled — a cancelled export removes its
-  partial file.
+  the picture when **Loop** is more than 1; GIFs and stills are silent. Every
+  export — movie or PNG — runs on its own thread with progress in the toolbar
+  and the export panel, and can be cancelled; a cancelled export removes its
+  partial file. Opening a file is threaded the same way, so a slow decode
+  (a 4K clip, a big HEIC) never freezes the window.
 
 **Animate (timeline)** — toggle **Timeline** in the toolbar to keyframe the
 whole effect chain: scrub the playhead, dial in a look, press **Keyframe**,
@@ -362,7 +367,7 @@ On an RTX 3090 (Vulkan backend):
 - A HEIC still renders through ffmpeg 7.0 (320×240 in, 1280×960 out), an
   AVIF through ffmpeg 6.1, and ffmpeg 6.1 refuses the HEIC with a message
   naming the version it needs.
-- 173 tests pass (`cargo test --release`), no warnings.
+- 176 tests pass (`cargo test --release`), no warnings.
 
 On a Linux desktop (X11, Mesa's software Vulkan driver — a verification
 target, not a shipping one), driving the window with `xdotool` and reading
@@ -384,6 +389,11 @@ preview goes black and white through the CRT shader; loading 'Blade Runner'
 tints the preview and fills the panel with its values, and loading 'Clean
 CRT' after it turns the grade off and returns every control to neutral.
 The About box opens from the button and from F1, shows the commit and the
-llvmpipe adapter, and Copy puts the report on the clipboard.
+llvmpipe adapter, and Copy puts the report on the clipboard. Opening a
+6000×6000 PNG shows the spinner beside Open, the "Opening big6k.png…" card
+over the old picture and the status line, with the window still painting,
+then swaps the picture in; opening a 4K clip lands on frame 1/120 with the
+transport bar; a PNG export shows the animated "Exporting…" bar and Cancel
+in the toolbar and ends with "Exported … (1920x1920, 2.3 MB)".
 It has not been run on a Windows desktop since these changes; the packaged
 zip is what the workflow builds there.
