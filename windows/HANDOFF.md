@@ -85,7 +85,7 @@ counterpart in its header comment. Port *behaviour*, not frameworks.
 | No VC++ Redistributable needed (crt-static) | ✅ CI check in `package.ps1` passes; `objdump -p` on the artifact shows no MSVCP140 / VCRUNTIME140 imports |
 | Colour-grade stage (`ntscrt-core/src/grade.rs`, `gpu/grade.{rs,wgsl}`, `ui/grade_panel.rs`) | ✅ GPU pass matches the CPU reference within 0.5/255; panel driven on screen; keyframes and presets carry it |
 | Eight colour presets (B&W, Solarized, Inverted, Blade Runner, Max Headroom, Neon, Red/Cyan highlight) | ✅ smoke-rendered side by side and loaded in the GUI; a pre-grade preset loaded after one turns the stage off |
-| ffmpeg bundled beside the exe (pinned build, SHA-256 checked) | ✅ `package.ps1` run here with pwsh: digest ok, 190 MB staged, 147 MB zip; lookup order unit-checked with `ntscrt-smoke --ffmpeg` |
+| ffmpeg bundled beside the exe (pinned build, SHA-256 checked) | ✅ CI on `windows-latest`: digest ok, staged copy is the one resolved, ffmpeg 8.1.2 runs; 143 MB zip |
 
 **171 tests, zero warnings.** 62 in `ntscrt-core`, 109 in `ntscrt-app`.
 
@@ -147,11 +147,12 @@ from the workflow is the thing to run first.
 - **Not run on Windows since the GUI pass** — see above.
 - **Zip only.** No installer, no code signing. SmartScreen will warn on an
   unsigned download.
-- **The bundled ffmpeg has not been run on Windows yet.** `package.ps1` was
-  exercised here under pwsh (download, digest, staging, licence files) but
-  the "is the staged copy the one resolved" check only runs on Windows,
-  where the `.exe` can execute. The next CI run on `windows-latest` is the
-  first real test; read its Package step.
+- **The bundled ffmpeg has been run on a Windows *runner*, not a desktop.**
+  [Run 34984713862](https://github.com/scythe000/NTSCRT/actions/runs/34984713862)'s
+  Package step downloaded it, matched the digest, and `ntscrt-smoke --ffmpeg`
+  from the staged folder reported both tools "bundled beside the app" with
+  `ffmpeg version n8.1.2-52-g5a03dfa0f6` — so the shared DLLs load. A real
+  video decode/export with it on a desktop is still to do.
 - **The grade runs after the signal stage only.** A "grade before NTSC"
   switch (so the tape records an already-tinted picture) was considered and
   left out: it would need a CPU implementation inside the playback
