@@ -50,3 +50,5 @@ eframe = { version = "0.36.2", default-features = false, features = ["wgpu", "de
 [build-dependencies]
 # Embeds the app icon and marks the binary DPI-aware / per-monitor v2.
 winresource = "0.1"
+# Turns Assets/icon-source.png into the .ico at build time (see build.rs).
+image = { version = "0.25", default-features = false, features = ["png", "ico"] }
