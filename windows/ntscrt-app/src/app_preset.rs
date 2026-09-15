@@ -1,7 +1,7 @@
 //! App presets: the entire configuration as a JSON file.
 //!
 //! Same `"version": 1` format the macOS build reads and writes (see
-//! `Sources/CrtApp/AppState.swift`), so the 17 files in `presets/` load here
+//! `Sources/CrtApp/AppState.swift`), so the files in `presets/` load here
 //! and anything saved here opens on a Mac.
 //!
 //! ```text
