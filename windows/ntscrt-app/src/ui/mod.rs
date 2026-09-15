@@ -5,6 +5,7 @@
 //! in signal order — that layout is kept here, with egui's idioms standing in
 //! for SwiftUI's.
 
+mod about_window;
 mod downscale_panel;
 mod grade_panel;
 mod ntsc_panel;
@@ -183,6 +184,14 @@ pub fn top_bar(app: &mut NtscrtApp, root: &mut egui::Ui, rs: Option<&RenderState
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(4.0);
+                if ui
+                    .button("About")
+                    .on_hover_text(format!("Version {} (F1)", crate::about::BUILD.short()))
+                    .clicked()
+                {
+                    app.about_open = !app.about_open;
+                }
+                ui.separator();
                 let (cw, ch) = app.chain_input_size();
                 ui.label(
                     egui::RichText::new(format!("chain input {cw}\u{00D7}{ch}"))
@@ -193,6 +202,11 @@ pub fn top_bar(app: &mut NtscrtApp, root: &mut egui::Ui, rs: Option<&RenderState
         });
         ui.add_space(2.0);
     });
+
+    about_window::show(app, &ctx, rs);
+    if ctx.input(|i: &egui::InputState| i.key_pressed(egui::Key::F1)) {
+        app.about_open = !app.about_open;
+    }
 
     // Keyboard shortcuts, matching the macOS Command-key equivalents. Space
     // is play/pause, as it is in every player.

@@ -13,7 +13,7 @@ fn main() -> eframe::Result<()> {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("NTSCRT")
+            .with_title(format!("NTSCRT {}", ntscrt_app::about::BUILD.version))
             .with_inner_size([1280.0, 820.0])
             .with_min_inner_size([900.0, 600.0])
             .with_drag_and_drop(true),

@@ -30,6 +30,7 @@ USAGE:
     ntscrt-smoke --list-params [shader-id]
     ntscrt-smoke --list-grade
     ntscrt-smoke --ffmpeg
+    ntscrt-smoke --version
     ntscrt-smoke --list-presets
     ntscrt-smoke --timeline <preset> [--watch <ntsc-setting>]
     ntscrt-smoke --video-info <file>
@@ -387,6 +388,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             };
             println!("  {:<34} {:<28} = {:<10} {}", p.name, kind, p.initial, p.description);
         }
+        return Ok(());
+    }
+    if args.first().is_some_and(|a| a == "--version" || a == "-V") {
+        // The same text as the app's About box, GPU left out (no context
+        // here) and ffmpeg included, since that is what a bug report needs.
+        print!("{}", ntscrt_app::about::BUILD.report(None, Some(&ntscrt_app::about::describe_ffmpeg())));
         return Ok(());
     }
     if args.first().is_some_and(|a| a == "--ffmpeg") {

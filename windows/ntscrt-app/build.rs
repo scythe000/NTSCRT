@@ -1,4 +1,5 @@
-//! Windows resources: the app icon and the application manifest.
+//! Windows resources (the app icon and the application manifest) and the
+//! build description the About box shows.
 //!
 //! The icon's source of truth is `Assets/icon-source.png`, the same 1024px
 //! render the macOS `.icns` is made from, so the two builds cannot drift
@@ -34,6 +35,8 @@ const MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={ICON_SOURCE}");
+
+    describe_build();
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
     let ico = out_dir.join("ntscrt.ico");
@@ -90,4 +93,93 @@ fn write_ico(source: &Path, dest: &Path) -> Result<(), Box<dyn std::error::Error
     let file = std::fs::File::create(dest)?;
     IcoEncoder::new(std::io::BufWriter::new(file)).encode_images(&frames)?;
     Ok(())
+}
+
+/// Hand the About box what `CARGO_PKG_VERSION` alone can't tell the user:
+/// which commit this is, whether the tree was clean, when it was built, and
+/// the versions of the four libraries that decide what the picture looks
+/// like. Everything is best-effort — a tarball build without git still
+/// compiles, it just says "unknown".
+fn describe_build() {
+    let git = |args: &[&str]| -> Option<String> {
+        let out = std::process::Command::new("git").args(args).output().ok()?;
+        out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+    // Rebuild when the checked-out commit changes. HEAD names the branch;
+    // the branch file moves on every commit.
+    if let Some(git_dir) = git(&["rev-parse", "--git-dir"]) {
+        println!("cargo:rerun-if-changed={git_dir}/HEAD");
+        if let Some(head) = git(&["symbolic-ref", "-q", "HEAD"]) {
+            println!("cargo:rerun-if-changed={git_dir}/{head}");
+        }
+    }
+    let hash = git(&["rev-parse", "--short=9", "HEAD"]).unwrap_or_else(|| "unknown".into());
+    let dirty = git(&["status", "--porcelain", "--untracked-files=no", "--", "."])
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    println!("cargo:rustc-env=NTSCRT_GIT_HASH={hash}{}", if dirty { "-dirty" } else { "" });
+
+    // Date only: a build is identified by its commit, the date just orients
+    // whoever reads the box. SOURCE_DATE_EPOCH keeps reproducible builds so.
+    let secs = std::env::var("SOURCE_DATE_EPOCH")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        });
+    println!("cargo:rustc-env=NTSCRT_BUILD_DATE={}", ymd_from_unix(secs));
+
+    println!(
+        "cargo:rustc-env=NTSCRT_TARGET={}",
+        std::env::var("TARGET").unwrap_or_else(|_| "unknown".into())
+    );
+
+    // Library versions from Cargo.lock, one directory up (the workspace).
+    println!("cargo:rerun-if-changed=../Cargo.lock");
+    let lock = std::fs::read_to_string("../Cargo.lock").unwrap_or_default();
+    for (name, var) in [
+        ("ntsc-rs", "NTSCRT_DEP_NTSC_RS"),
+        ("librashader", "NTSCRT_DEP_LIBRASHADER"),
+        ("wgpu", "NTSCRT_DEP_WGPU"),
+        ("egui", "NTSCRT_DEP_EGUI"),
+    ] {
+        let version = lock_version(&lock, name).unwrap_or_else(|| "unknown".into());
+        println!("cargo:rustc-env={var}={version}");
+    }
+}
+
+/// The `version` of package `name` in Cargo.lock text.
+fn lock_version(lock: &str, name: &str) -> Option<String> {
+    let needle = format!("name = \"{name}\"");
+    let mut lines = lock.lines();
+    while let Some(line) = lines.next() {
+        if line.trim() == needle {
+            return lines
+                .next()
+                .and_then(|l| l.trim().strip_prefix("version = \""))
+                .and_then(|v| v.strip_suffix('"'))
+                .map(str::to_string);
+        }
+    }
+    None
+}
+
+/// YYYY-MM-DD for a Unix timestamp; the civil-from-days algorithm, so the
+/// build script needs no date crate.
+fn ymd_from_unix(secs: u64) -> String {
+    let days = (secs / 86_400) as i64;
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}")
 }

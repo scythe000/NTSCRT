@@ -86,8 +86,9 @@ counterpart in its header comment. Port *behaviour*, not frameworks.
 | Colour-grade stage (`ntscrt-core/src/grade.rs`, `gpu/grade.{rs,wgsl}`, `ui/grade_panel.rs`) | ✅ GPU pass matches the CPU reference within 0.5/255; panel driven on screen; keyframes and presets carry it |
 | Eight colour presets (B&W, Solarized, Inverted, Blade Runner, Max Headroom, Neon, Red/Cyan highlight) | ✅ smoke-rendered side by side and loaded in the GUI; a pre-grade preset loaded after one turns the stage off |
 | ffmpeg bundled beside the exe (pinned build, SHA-256 checked) | ✅ CI on `windows-latest`: digest ok, staged copy is the one resolved, ffmpeg 8.1.2 runs; 143 MB zip |
+| About box (version, commit, date, GPU, ffmpeg, libraries; Copy; F1) + version in the title + `ntscrt-smoke --version` | ✅ on screen; report copied to the clipboard |
 
-**171 tests, zero warnings.** 62 in `ntscrt-core`, 109 in `ntscrt-app`.
+**173 tests, zero warnings.** 62 in `ntscrt-core`, 111 in `ntscrt-app`.
 
 ### Parity with the macOS app
 
@@ -206,6 +207,7 @@ windows/
     param_gates.rs        shader param gating       (ParamGates.swift)
     render.rs             HeadlessRenderer, FrameSequence — the export path
     bin/smoke.rs          ntscrt-smoke, the headless verifier
+    about.rs              build description (from build.rs env vars); ui/about_window.rs shows it
   ffmpeg-bundle.json      the pinned ffmpeg build package.ps1 ships
   package.ps1             stage + zip, incl. the ffmpeg download and checks
     build.rs              .ico from Assets/icon-source.png + DPI manifest (Windows only)
@@ -576,6 +578,21 @@ they appear. To check an artifact from Linux: `objdump -p ntscrt.exe | grep
 of Windows 10). This was found by inspecting the CI artifact; the setting
 was not verified on a clean Windows install.
 
+### The build describes itself through `build.rs`
+
+`about.rs` reads `NTSCRT_GIT_HASH`, `NTSCRT_BUILD_DATE`, `NTSCRT_TARGET`
+and four `NTSCRT_DEP_*` variables that `build.rs` emits with
+`cargo:rustc-env`. The hash is `git rev-parse --short=9 HEAD` with
+`-dirty` appended when `git status --porcelain -- .` (the `windows/` tree
+only) is non-empty — so a build from an edited tree says so, which is the
+whole point when the question is "which exe is this". `build.rs` emits
+`rerun-if-changed` for `.git/HEAD` and the branch ref it points to, so a
+new commit rebuilds the crate; a dirty→clean transition without a commit
+does not, which is acceptable. Library versions are scraped from
+`Cargo.lock` by text (`name = "…"` then the next line's `version`), not
+from `cargo metadata`, to keep the build script dependency-free. Without
+git (a tarball) everything says "unknown" and the build still succeeds.
+
 ### The icon is generated, not committed
 
 `build.rs` renders `Assets/icon-source.png` (the macOS icon's source) to a
@@ -720,10 +737,7 @@ is done. What's left, roughly in order of value:
    (`chainCache`) so switching back is instant; Windows recompiles
    (crt-royale takes a couple of seconds). Parameter values already survive
    the switch, so this is purely time.
-7. **An About box with the version.** The owner asked for it (they had no
-   way to tell which build they were running). `env!("CARGO_PKG_VERSION")`
-   plus the git hash from `build.rs`, in a menu next to Preset.
-8. **More grade controls, if wanted.** Candidates: posterize, vignette,
+7. **More grade controls, if wanted.** Candidates: posterize, vignette,
    a "grade before the signal stage" switch (see Known gaps for its cost),
    and a proper HSV hue for the colour highlight instead of the I/Q angle.
 

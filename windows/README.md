@@ -118,7 +118,11 @@ and attaches it to a GitHub Release when a `v*` tag is pushed.
 ## Using the app
 
 **Toolbar** — **Open** (Ctrl+O) an image or video, **Export** (Ctrl+E), the
-**Preset** menu, and the view controls. **Animate** runs the preview
+**Preset** menu, the view controls, and **About** (F1) at the right end —
+version, commit and build date (also in the window title), GPU and backend,
+which ffmpeg is in use and where it came from, and the library versions,
+with a **Copy** button for bug reports. `ntscrt-smoke --version` prints the
+same text. **Animate** runs the preview
 continuously so tape noise, jitter and interlacing actually move — leave it on
 for the real experience. It runs at 30 fps (NTSC's own rate) regardless of
 your monitor's refresh rate, as does the timeline preview at the timeline's
@@ -258,6 +262,7 @@ rule of thumb, crisp scanlines want 3+ output rows per downscale line.
 .\target\release\ntscrt-smoke.exe --list-params royale    # a shader's parameters, ranges and defaults
 .\target\release\ntscrt-smoke.exe --list-grade            # the colour-grade controls
 .\target\release\ntscrt-smoke.exe --ffmpeg                # which ffmpeg/ffprobe the app will run, and from where
+.\target\release\ntscrt-smoke.exe --version               # the About box as text: version, commit, ffmpeg, libraries
 ```
 
 ```powershell
@@ -343,7 +348,7 @@ On an RTX 3090 (Vulkan backend):
 - A HEIC still renders through ffmpeg 7.0 (320×240 in, 1280×960 out), an
   AVIF through ffmpeg 6.1, and ffmpeg 6.1 refuses the HEIC with a message
   naming the version it needs.
-- 171 tests pass (`cargo test --release`), no warnings.
+- 173 tests pass (`cargo test --release`), no warnings.
 
 On a Linux desktop (X11, Mesa's software Vulkan driver — a verification
 target, not a shipping one), driving the window with `xdotool` and reading
@@ -364,5 +369,7 @@ through the middle. The Colour panel enables, drags saturation to 0 and the
 preview goes black and white through the CRT shader; loading 'Blade Runner'
 tints the preview and fills the panel with its values, and loading 'Clean
 CRT' after it turns the grade off and returns every control to neutral.
+The About box opens from the button and from F1, shows the commit and the
+llvmpipe adapter, and Copy puts the report on the clipboard.
 It has not been run on a Windows desktop since these changes; the packaged
 zip is what the workflow builds there.

@@ -143,6 +143,12 @@ pub struct NtscrtApp {
     pub error: Option<String>,
     /// Set when settings change; clears once a frame has been rendered.
     dirty: bool,
+
+    // ---- about ----
+    pub about_open: bool,
+    /// ffmpeg's version line, probed when the About box opens (it is a
+    /// subprocess) and dropped when it closes.
+    pub about_ffmpeg: Option<String>,
 }
 
 impl NtscrtApp {
@@ -203,6 +209,8 @@ impl NtscrtApp {
             animate_pacer: Default::default(),
             status: None,
             error: None,
+            about_open: false,
+            about_ffmpeg: None,
             dirty: true,
         };
         app.reload_chain(&render_state.device, &render_state.queue);

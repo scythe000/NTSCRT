@@ -4,6 +4,7 @@
 //! the headless verifier (`ntscrt-smoke`, the counterpart of the macOS
 //! `crt-smoke` target) drive exactly the same code.
 
+pub mod about;
 pub mod app;
 pub mod app_preset;
 pub mod app_timeline;
