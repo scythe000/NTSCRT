@@ -118,6 +118,24 @@ try {
     $listing | ForEach-Object { Write-Host "   $_" }
     if ($listing -match 'MISSING') { throw 'a bundled shader does not resolve from the staged folder' }
 
+    # The zip must run on a clean Windows install, so the executables may not
+    # import the Visual C++ Redistributable. .cargo/config.toml links it
+    # statically; this catches the setting being lost. Import names sit in the
+    # PE as plain ASCII, so a byte search is enough.
+    if ($env:OS -eq 'Windows_NT') {
+        Write-Host '== checking for Visual C++ Redistributable imports ==' -ForegroundColor Cyan
+        foreach ($name in 'ntscrt', 'ntscrt-smoke') {
+            $bytes = [System.IO.File]::ReadAllBytes((Join-Path $stage "$name.exe"))
+            $text = [System.Text.Encoding]::ASCII.GetString($bytes)
+            foreach ($dll in 'VCRUNTIME140.dll', 'VCRUNTIME140_1.dll', 'MSVCP140.dll') {
+                if ($text.IndexOf($dll, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                    throw "$name.exe imports $dll - the C++ runtime is not linked statically"
+                }
+            }
+            Write-Host "   $name.exe: no VC++ Redistributable imports"
+        }
+    }
+
     Write-Host "== zipping $zip ==" -ForegroundColor Cyan
     Compress-Archive -Path $stage -DestinationPath $zip -CompressionLevel Optimal
     $mb = [math]::Round((Get-Item $zip).Length / 1MB, 1)

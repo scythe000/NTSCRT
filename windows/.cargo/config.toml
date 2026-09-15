@@ -1,0 +1,8 @@
+# Link the Visual C++ runtime statically, so the shipped exe runs on a clean
+# Windows install. Without this the binary imports MSVCP140.dll and
+# VCRUNTIME140.dll (the C++ in librashader's glslang/spirv-cross bindings
+# pulls them in), which are the Visual C++ Redistributable — present on most
+# machines because other software installed it, absent on a fresh one. The
+# UCRT (api-ms-win-crt-*) stays dynamic; it is part of Windows 10.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
