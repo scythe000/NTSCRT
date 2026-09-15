@@ -110,24 +110,19 @@ fn setting_widget(
 
         SettingKind::Percentage { logarithmic } => {
             let AnySetting::Float(mut v) = app.ntsc.get_any(&desc.id) else { return };
-            let mut slider = egui::Slider::new(&mut v, 0.0..=1.0).text(desc.label);
-            if *logarithmic {
-                slider = slider.logarithmic(true);
-            }
-            if ui.add(slider).on_hover_text(hover).changed() {
+            if super::labelled_slider(ui, desc.label, &mut v, 0.0..=1.0, None, *logarithmic, hover)
+                .changed()
+            {
                 set(app, desc, AnySetting::Float(v));
             }
         }
 
         SettingKind::FloatRange { range, logarithmic } => {
             let AnySetting::Float(mut v) = app.ntsc.get_any(&desc.id) else { return };
-            let mut slider =
-                egui::Slider::new(&mut v, range.start().to_owned()..=range.end().to_owned())
-                    .text(desc.label);
-            if *logarithmic {
-                slider = slider.logarithmic(true);
-            }
-            if ui.add(slider).on_hover_text(hover).changed() {
+            let range = range.start().to_owned()..=range.end().to_owned();
+            if super::labelled_slider(ui, desc.label, &mut v, range, None, *logarithmic, hover)
+                .changed()
+            {
                 set(app, desc, AnySetting::Float(v));
             }
         }
@@ -138,10 +133,10 @@ fn setting_widget(
                 AnySetting::Enum(e) => e as i32,
                 _ => return,
             };
-            let slider =
-                egui::Slider::new(&mut v, range.start().to_owned()..=range.end().to_owned())
-                    .text(desc.label);
-            if ui.add(slider).on_hover_text(hover).changed() {
+            let range = range.start().to_owned()..=range.end().to_owned();
+            if super::labelled_slider(ui, desc.label, &mut v, range, Some(1.0), false, hover)
+                .changed()
+            {
                 set(app, desc, AnySetting::Int(v));
             }
         }

@@ -16,6 +16,62 @@ use eframe::egui;
 
 use crate::app::{NtscrtApp, RenderState};
 
+/// A parameter slider laid out as the macOS panels do it: the label and an
+/// editable value on one row, the slider full-width beneath. egui's own
+/// slider puts the label after the value on the same row, and the longer
+/// CRT parameter names ("Mask - Number of Triads Desired") then ran off the
+/// edge of the sidebar. The returned response is `changed()` if either the
+/// slider or the value field moved.
+pub(super) fn labelled_slider<N: egui::emath::Numeric>(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut N,
+    range: std::ops::RangeInclusive<N>,
+    step: Option<f64>,
+    logarithmic: bool,
+    hover: &str,
+) -> egui::Response {
+    let (lo, hi) = (range.start().to_f64(), range.end().to_f64());
+    // A step declared for the parameter is also the natural drag increment;
+    // otherwise a drag across the field's width covers about the range.
+    let speed = step.filter(|s| *s > 0.0).unwrap_or((hi - lo).abs() / 200.0).max(1e-6);
+
+    ui.vertical(|ui| {
+        let field = ui
+            .horizontal(|ui| {
+                let l = ui.add(egui::Label::new(label).truncate());
+                if !hover.is_empty() {
+                    l.on_hover_text(hover);
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let mut field = egui::DragValue::new(value).range(range.clone()).speed(speed);
+                    // Integers keep DragValue's own zero-decimal formatting.
+                    if !N::INTEGRAL {
+                        field = field.max_decimals(4);
+                    }
+                    ui.add(field)
+                })
+                .inner
+            })
+            .inner;
+
+        ui.spacing_mut().slider_width = ui.available_width();
+        let mut slider = egui::Slider::new(value, range)
+            .show_value(false)
+            .clamping(egui::SliderClamping::Edits);
+        if let Some(s) = step.filter(|s| *s > 0.0 && s.is_finite()) {
+            slider = slider.step_by(s);
+        }
+        if logarithmic {
+            slider = slider.logarithmic(true);
+        }
+        let slider = ui.add(slider);
+        let slider = if hover.is_empty() { slider } else { slider.on_hover_text(hover) };
+        slider | field
+    })
+    .inner
+}
+
 pub fn top_bar(app: &mut NtscrtApp, root: &mut egui::Ui, rs: Option<&RenderState>) {
     let ctx = root.ctx().clone();
     egui::Panel::top("toolbar").show(root, |ui| {

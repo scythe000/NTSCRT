@@ -111,13 +111,16 @@ pub fn show(app: &mut NtscrtApp, ui: &mut egui::Ui, rs: Option<&RenderState>) {
                         }
                         r
                     } else if p.has_usable_range() {
-                        let mut slider = egui::Slider::new(&mut v, p.minimum..=p.maximum)
-                            .text(label)
-                            .clamping(egui::SliderClamping::Edits);
-                        if p.step > 0.0 && p.step.is_finite() {
-                            slider = slider.step_by(p.step as f64);
-                        }
-                        ui.add(slider)
+                        super::labelled_slider(
+                            ui,
+                            label,
+                            &mut v,
+                            p.minimum..=p.maximum,
+                            Some(p.step as f64),
+                            false,
+                            // The hover below covers the whole control.
+                            "",
+                        )
                     } else {
                         // Degenerate declared range — fall back to a plain
                         // number field rather than a slider that can't move.
