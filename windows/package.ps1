@@ -1,15 +1,15 @@
 <#
 .SYNOPSIS
-Build a distributable NTSCRT for Windows: a zip that runs from any folder.
+Build a distributable VHS-Studio: a zip that runs from any folder.
 
 .DESCRIPTION
 The Windows counterpart of scripts/make-release.sh. Runs the tests, builds
 release binaries, then stages everything the app looks for beside its
-executable (see ntscrt-app/src/presets.rs):
+executable (see vhs-studio-app/src/presets.rs):
 
-    NTSCRT-<version>-windows-x64/
-        ntscrt.exe          the app
-        ntscrt-smoke.exe    headless verifier
+    VHS-Studio-<version>-windows-x64/
+        vhs-studio.exe          the app
+        vhs-studio-smoke.exe    headless verifier
         ffmpeg.exe          video decode/encode, a pinned build (see below)
         ffprobe.exe
         av*.dll sw*.dll     ffmpeg's libraries
@@ -27,7 +27,7 @@ so every install decodes and encodes identically (HEIC needs 7.1+; an old
 PATH copy would silently lose it). The build is pinned in
 ffmpeg-bundle.json — release tag, asset name and SHA-256 — and downloaded
 from BtbN/FFmpeg-Builds on GitHub, verified, and its bin/ contents (minus
-ffplay) staged beside ntscrt.exe, which is the first place the app looks.
+ffplay) staged beside vhs-studio.exe, which is the first place the app looks.
 It is a GPL build (the app's H.264/HEVC exports need libx264/libx265), run
 as a separate process; its licence ships in licenses/.
 
@@ -70,8 +70,8 @@ if (-not (Test-Path (Join-Path $shadersSource 'crt'))) {
 Push-Location $windows
 try {
     $meta = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
-    $version = ($meta.packages | Where-Object name -eq 'ntscrt-app').version
-    if (-not $version) { throw 'could not read the ntscrt-app version from cargo metadata' }
+    $version = ($meta.packages | Where-Object name -eq 'vhs-studio-app').version
+    if (-not $version) { throw 'could not read the vhs-studio-app version from cargo metadata' }
 
     if (-not $SkipTests) {
         Write-Host '== cargo test --release ==' -ForegroundColor Cyan
@@ -87,13 +87,13 @@ try {
     # `$IsWindows` is PowerShell 6+; this also runs under Windows PowerShell 5.
     $exeSuffix = if ($env:OS -eq 'Windows_NT') { '.exe' } else { '' }
     $bin = Join-Path $windows 'target/release'
-    foreach ($name in 'ntscrt', 'ntscrt-smoke') {
+    foreach ($name in 'vhs-studio', 'vhs-studio-smoke') {
         if (-not (Test-Path (Join-Path $bin "$name$exeSuffix"))) {
             throw "target/release/$name$exeSuffix is missing; build first or drop -SkipBuild"
         }
     }
 
-    $stageName = "NTSCRT-$version-windows-x64"
+    $stageName = "VHS-Studio-$version-windows-x64"
     $stage = Join-Path $Out $stageName
     $zip = Join-Path $Out "$stageName.zip"
 
@@ -102,8 +102,8 @@ try {
     if (Test-Path $zip) { Remove-Item -Force $zip }
     New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
-    Copy-Item (Join-Path $bin "ntscrt$exeSuffix") $stage
-    Copy-Item (Join-Path $bin "ntscrt-smoke$exeSuffix") $stage
+    Copy-Item (Join-Path $bin "vhs-studio$exeSuffix") $stage
+    Copy-Item (Join-Path $bin "vhs-studio-smoke$exeSuffix") $stage
     Copy-Item (Join-Path $windows 'README.md') $stage
 
     # The shader tree, minus its .git. Copy-Item has no exclude-directory, so
@@ -169,18 +169,18 @@ try {
         @(
             "FFmpeg $($pin.version) ($($pin.asset))"
             ''
-            'ffmpeg.exe, ffprobe.exe and the av*/sw* DLLs beside ntscrt.exe are FFmpeg,'
+            'ffmpeg.exe, ffprobe.exe and the av*/sw* DLLs beside vhs-studio.exe are FFmpeg,'
             "licensed under the $($pin.license) (see FFmpeg-LICENSE.txt). They are an"
             'unmodified build from https://github.com/BtbN/FFmpeg-Builds'
             "(release $($pin.release)); FFmpeg's source is at https://ffmpeg.org and"
-            'the build scripts are in that repository. NTSCRT runs ffmpeg as a separate'
+            'the build scripts are in that repository. VHS-Studio runs ffmpeg as a separate'
             'program for video decoding/encoding and HEIC/AVIF stills; it does not link'
             'to it.'
             ''
             'To use a different ffmpeg, delete these files and put ffmpeg/ffprobe on PATH,'
-            'or set NTSCRT_FFMPEG and NTSCRT_FFPROBE to the executables.'
+            'or set VHS_STUDIO_FFMPEG and VHS_STUDIO_FFPROBE to the executables.'
         ) | Set-Content (Join-Path $licenses 'FFmpeg-NOTICE.txt')
-        $shipped = (Get-ChildItem -Path $stage -File | Where-Object { $_.Name -match '\.(dll|exe)$' -and $_.Name -notmatch '^ntscrt' } | Measure-Object -Property Length -Sum).Sum
+        $shipped = (Get-ChildItem -Path $stage -File | Where-Object { $_.Name -match '\.(dll|exe)$' -and $_.Name -notmatch '^vhs-studio' } | Measure-Object -Property Length -Sum).Sum
         Write-Host ("   staged {0} MB of ffmpeg" -f [math]::Round($shipped / 1MB))
     }
 
@@ -188,10 +188,10 @@ try {
     # the "beside the executable" lookup the install relies on, and the one
     # thing a source-tree build never exercises.
     Write-Host '== checking the staged shaders resolve ==' -ForegroundColor Cyan
-    $env:NTSCRT_SHADERS = $null
-    $env:NTSCRT_PRESETS = $null
-    $listing = & (Join-Path $stage "ntscrt-smoke$exeSuffix") --list-shaders
-    if ($LASTEXITCODE -ne 0) { throw "ntscrt-smoke --list-shaders failed ($LASTEXITCODE)" }
+    $env:VHS_STUDIO_SHADERS = $null
+    $env:VHS_STUDIO_PRESETS = $null
+    $listing = & (Join-Path $stage "vhs-studio-smoke$exeSuffix") --list-shaders
+    if ($LASTEXITCODE -ne 0) { throw "vhs-studio-smoke --list-shaders failed ($LASTEXITCODE)" }
     $listing | ForEach-Object { Write-Host "   $_" }
     if ($listing -match 'MISSING') { throw 'a bundled shader does not resolve from the staged folder' }
 
@@ -200,10 +200,10 @@ try {
     # with a real staged copy. Windows only: the .exe cannot run elsewhere.
     if (-not $NoFFmpeg -and $env:OS -eq 'Windows_NT') {
         Write-Host '== checking the bundled ffmpeg is the one found ==' -ForegroundColor Cyan
-        $env:NTSCRT_FFMPEG = $null
-        $env:NTSCRT_FFPROBE = $null
-        $report = & (Join-Path $stage "ntscrt-smoke$exeSuffix") --ffmpeg
-        if ($LASTEXITCODE -ne 0) { throw "ntscrt-smoke --ffmpeg failed ($LASTEXITCODE): $report" }
+        $env:VHS_STUDIO_FFMPEG = $null
+        $env:VHS_STUDIO_FFPROBE = $null
+        $report = & (Join-Path $stage "vhs-studio-smoke$exeSuffix") --ffmpeg
+        if ($LASTEXITCODE -ne 0) { throw "vhs-studio-smoke --ffmpeg failed ($LASTEXITCODE): $report" }
         $report | ForEach-Object { Write-Host "   $_" }
         if (($report | Where-Object { $_ -match 'bundled beside the app' } | Measure-Object).Count -ne 2) {
             throw 'the staged ffmpeg/ffprobe were not the ones resolved'
@@ -216,7 +216,7 @@ try {
     # PE as plain ASCII, so a byte search is enough.
     if ($env:OS -eq 'Windows_NT') {
         Write-Host '== checking for Visual C++ Redistributable imports ==' -ForegroundColor Cyan
-        foreach ($name in 'ntscrt', 'ntscrt-smoke') {
+        foreach ($name in 'vhs-studio', 'vhs-studio-smoke') {
             $bytes = [System.IO.File]::ReadAllBytes((Join-Path $stage "$name.exe"))
             $text = [System.Text.Encoding]::ASCII.GetString($bytes)
             foreach ($dll in 'VCRUNTIME140.dll', 'VCRUNTIME140_1.dll', 'MSVCP140.dll') {

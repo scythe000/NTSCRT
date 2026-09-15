@@ -1,4 +1,4 @@
-# Build, test and package the Windows port.
+# Build, test and package VHS-Studio, the Windows app under windows/.
 #
 # Every push and pull request builds the workspace under windows/ on a
 # Windows runner, runs the tests and uploads the packaged zip as a workflow
@@ -59,12 +59,12 @@ jobs:
         shell: pwsh
         run: |
           $meta = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
-          $v = ($meta.packages | Where-Object name -eq 'ntscrt-app').version
+          $v = ($meta.packages | Where-Object name -eq 'vhs-studio-app').version
           "version=$v" >> $env:GITHUB_OUTPUT
 
       - uses: actions/upload-artifact@v4
         with:
-          name: NTSCRT-${{ steps.version.outputs.version }}-windows-x64
+          name: VHS-Studio-${{ steps.version.outputs.version }}-windows-x64
           path: windows/dist/*.zip
           if-no-files-found: error
 

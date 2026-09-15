@@ -1,13 +1,26 @@
-# NTSCRT for Windows
+# VHS-Studio
 
-A native Windows build of [NTSCRT](../README.md): [ntsc-rs](https://github.com/ntsc-rs/ntsc-rs)
-analog signal emulation followed by RetroArch's CRT shaders through
-[librashader](https://github.com/SnowflakePowered/librashader), same pipeline
-as the macOS app —
+**Make any image or video look like it's playing on a 1980s TV — on
+Windows.** [ntsc-rs](https://github.com/ntsc-rs/ntsc-rs) analog signal
+emulation (composite artifacts, tape noise, head switching), a colour grade,
+and RetroArch's CRT shaders through
+[librashader](https://github.com/SnowflakePowered/librashader) (scanlines,
+phosphor masks, glow), in one pipeline:
 
 ```
-your image → NTSC/VHS signal degradation (full res) → downscale to retro resolution → CRT shader → screen
+your image → NTSC/VHS signal degradation (full res) → downscale to retro resolution → colour grade → CRT shader → screen
 ```
+
+VHS-Studio began as the Windows build of
+[**NTSCRT**](https://github.com/finnmckenty/NTSCRT), Finn McKenty's macOS
+app that first wired these two libraries together, and it still owes it the
+pipeline, the house VHS look, the preset format, the keyframe model, the
+bundled presets and most of its design. It has since become its own program
+— a colour-grade stage, bundled ffmpeg and other things the Mac app doesn't
+have — so it has its own name. The macOS NTSCRT app lives in the rest of this
+repository (`Sources/`, [README](../README.md)); the Windows app is
+everything under `windows/`. As with NTSCRT: all the actual image magic
+belongs to ntsc-rs and the RetroArch shader community.
 
 > **Picking this up?** [HANDOFF.md](HANDOFF.md) has the current state, the
 > decisions that aren't obvious from the code, and the API traps (egui 0.36,
@@ -16,7 +29,7 @@ your image → NTSC/VHS signal degradation (full res) → downscale to retro res
 ## Why this is a rewrite, not a port
 
 The two projects doing the actual image work are already cross-platform Rust,
-so they carry over directly. The app around them does not: the macOS build is
+so they carry over directly. The app around them does not: the macOS NTSCRT build is
 ~9,000 lines of Swift against SwiftUI, AppKit, Metal, AVFoundation, CoreImage
 and ImageIO, none of which exist on Windows. Swift has a Windows toolchain,
 but that gets you the language, not the frameworks.
@@ -45,7 +58,7 @@ executable, and the zip ships its own ffmpeg (a pinned build, see
 HEIC/AVIF stills. PNG/JPEG/BMP/TIFF/WebP stills need nothing at all. If you
 build from source instead, put [ffmpeg](https://ffmpeg.org/download.html)
 7.1 or newer on PATH for video and HEIC, or drop `ffmpeg.exe` and
-`ffprobe.exe` beside `ntscrt.exe` — that is where the app looks first.
+`ffprobe.exe` beside `vhs-studio.exe` — that is where the app looks first.
 
 Building additionally needs:
 
@@ -54,12 +67,12 @@ Building additionally needs:
 
 ## Install
 
-Download `NTSCRT-<version>-windows-x64.zip` from the
+Download `VHS-Studio-<version>-windows-x64.zip` from the
 [releases](https://github.com/scythe000/NTSCRT/releases), unzip it anywhere,
-run `ntscrt.exe`. The folder is self-contained: `shaders/`, `presets/`,
+run `vhs-studio.exe`. The folder is self-contained: `shaders/`, `presets/`,
 `ffmpeg.exe`/`ffprobe.exe` and their DLLs all sit beside the executable.
 
-The zip holds two programs. `ntscrt.exe` is the app. `ntscrt-smoke.exe` is
+The zip holds two programs. `vhs-studio.exe` is the app. `vhs-studio-smoke.exe` is
 a command-line tool that runs the same pipeline without a window — it
 renders a file with a shader or preset, lists the bundled shaders, presets
 and parameters, and reports on a video — which is how the build checks
@@ -80,8 +93,8 @@ cargo build --release
 
 Two binaries land in `windows/target/release/`:
 
-- `ntscrt.exe` — the app
-- `ntscrt-smoke.exe` — headless verifier, the counterpart of the macOS `crt-smoke`
+- `vhs-studio.exe` — the app
+- `vhs-studio-smoke.exe` — headless verifier, the counterpart of the macOS `crt-smoke`
 
 Use `--release`. The NTSC stage is CPU-bound and unusably slow unoptimised;
 dependencies are optimised even in debug builds for the same reason.
@@ -97,7 +110,7 @@ gets the default icon.
 pwsh windows/package.ps1        # tests, builds, stages and zips
 ```
 
-Produces `windows/dist/NTSCRT-<version>-windows-x64.zip` with both binaries,
+Produces `windows/dist/VHS-Studio-<version>-windows-x64.zip` with both binaries,
 the shader tree, the presets, this README and ffmpeg, after checking that the
 seven shaders resolve from the staged folder and that the staged ffmpeg is the
 one the app finds. The ffmpeg is a pinned build — release tag, asset name and
@@ -120,8 +133,9 @@ and attaches it to a GitHub Release when a `v*` tag is pushed.
 **Toolbar** — **Open** (Ctrl+O) an image or video, **Export** (Ctrl+E), the
 **Preset** menu, the view controls, and **About** (F1) at the right end —
 version, commit and build date (also in the window title), GPU and backend,
-which ffmpeg is in use and where it came from, and the library versions,
-with a **Copy** button for bug reports. `ntscrt-smoke --version` prints the
+which ffmpeg is in use and where it came from, the library versions, and a
+link to the NTSCRT app this is based on, with a **Copy** button for bug
+reports. `vhs-studio-smoke --version` prints the
 same text. **Animate** runs the preview
 continuously so tape noise, jitter and interlacing actually move — leave it on
 for the real experience. It runs at 30 fps (NTSC's own rate) regardless of
@@ -251,32 +265,32 @@ rule of thumb, crisp scanlines want 3+ output rows per downscale line.
 
 ```powershell
 # Render an image through the full pipeline
-.\target\release\ntscrt-smoke.exe input.png out.png --shader royale --downscale 320 --height 960
+.\target\release\vhs-studio-smoke.exe input.png out.png --shader royale --downscale 320 --height 960
 
 # Render with a bundled app preset
-.\target\release\ntscrt-smoke.exe input.png out.png --preset "Medium VHS" --height 720
+.\target\release\vhs-studio-smoke.exe input.png out.png --preset "Medium VHS" --height 720
 
 # Inventory
-.\target\release\ntscrt-smoke.exe --list-shaders          # which shaders resolve here
-.\target\release\ntscrt-smoke.exe --list-presets          # bundled presets and what they set
-.\target\release\ntscrt-smoke.exe --list-params royale    # a shader's parameters, ranges and defaults
-.\target\release\ntscrt-smoke.exe --list-grade            # the colour-grade controls
-.\target\release\ntscrt-smoke.exe --ffmpeg                # which ffmpeg/ffprobe the app will run, and from where
-.\target\release\ntscrt-smoke.exe --version               # the About box as text: version, commit, ffmpeg, libraries
+.\target\release\vhs-studio-smoke.exe --list-shaders          # which shaders resolve here
+.\target\release\vhs-studio-smoke.exe --list-presets          # bundled presets and what they set
+.\target\release\vhs-studio-smoke.exe --list-params royale    # a shader's parameters, ranges and defaults
+.\target\release\vhs-studio-smoke.exe --list-grade            # the colour-grade controls
+.\target\release\vhs-studio-smoke.exe --ffmpeg                # which ffmpeg/ffprobe the app will run, and from where
+.\target\release\vhs-studio-smoke.exe --version               # the About box as text: version, commit, ffmpeg, libraries
 ```
 
 ```powershell
 # Colour grade: any control, repeatable; turns the stage on
-.\target\release\ntscrt-smoke.exe input.png out.png --preset "Mild VHS" --grade saturation=0 --grade contrast=1.1
+.\target\release\vhs-studio-smoke.exe input.png out.png --preset "Mild VHS" --grade saturation=0 --grade contrast=1.1
 ```
 
 ```powershell
 # Video
-.\target\release\ntscrt-smoke.exe clip.mp4 --video-info
-.\target\release\ntscrt-smoke.exe clip.mp4 --playback 96      # throughput, drops, cache hits
-.\target\release\ntscrt-smoke.exe clip.mp4 --export out.mp4 --format h264 --quality high
-.\target\release\ntscrt-smoke.exe clip.mp4 --export out.gif --format gif --gif-width 480 --gif-fps 12
-.\target\release\ntscrt-smoke.exe still.png --export out.mp4 --still-frames 48   # VHS motion
+.\target\release\vhs-studio-smoke.exe clip.mp4 --video-info
+.\target\release\vhs-studio-smoke.exe clip.mp4 --playback 96      # throughput, drops, cache hits
+.\target\release\vhs-studio-smoke.exe clip.mp4 --export out.mp4 --format h264 --quality high
+.\target\release\vhs-studio-smoke.exe clip.mp4 --export out.gif --format gif --gif-width 480 --gif-fps 12
+.\target\release\vhs-studio-smoke.exe still.png --export out.mp4 --still-frames 48   # VHS motion
 ```
 
 `--preset`, `--shader`, `--downscale <px|off>`, `--method`, `--height`,
@@ -293,12 +307,12 @@ checking that a shader's metadata reaches the UI.
 
 The app looks for the shader tree beside the executable (`shaders/`) and then
 walks up to find `Vendor/slang-shaders`, so it works from both an install and
-a source checkout. Override with `NTSCRT_SHADERS`; `NTSCRT_PRESETS` does the
+a source checkout. Override with `VHS_STUDIO_SHADERS`; `VHS_STUDIO_PRESETS` does the
 same for the bundled `presets/` JSON. ffmpeg and ffprobe are looked for
 beside the executable first (the zip puts them there), then on PATH;
-`NTSCRT_FFMPEG` and `NTSCRT_FFPROBE` point at a specific executable.
+`VHS_STUDIO_FFMPEG` and `VHS_STUDIO_FFPROBE` point at a specific executable.
 
-## Differences from the macOS build
+## Differences from the macOS NTSCRT app
 
 - **A colour-grade stage.** Between the downscale and the CRT shader, with
   its own **Colour** panel and eight presets built on it (see above). Presets

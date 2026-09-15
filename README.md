@@ -18,7 +18,7 @@ Grab the DMG from [**Releases**](../../releases/latest), open it, and drag **NTS
 
 > **Intel note:** I build and test NTSCRT on Apple Silicon and haven't personally tested the Intel build. Intel support exists thanks to a contributed fix ([#1](../../pull/1)) verified by its author on an Intel iMac Pro — if something misbehaves on your Intel Mac, please open an issue.
 
-> **Windows:** a native Windows build lives in [`windows/`](windows/README.md) — same ntsc-rs + CRT shader pipeline, rebuilt on wgpu and egui because SwiftUI and Metal don't exist there. Stills only for now; build it with `cargo build --release`.
+> **Windows:** [**VHS-Studio**](windows/README.md), in [`windows/`](windows/), is the Windows app that grew out of NTSCRT — the same ntsc-rs + CRT shader pipeline rebuilt on wgpu and egui (SwiftUI and Metal don't exist there), with video, keyframes, exports, a colour-grade stage and bundled ffmpeg. Presets move between the two apps. Download the zip from Releases or build it with `cargo build --release`.
 
 ## Using the app
 

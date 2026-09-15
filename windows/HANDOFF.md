@@ -1,12 +1,25 @@
-# NTSCRT for Windows — handoff
+# VHS-Studio — handoff
 
 Written for whoever picks this up next, human or model. It covers what the
 port is, what state it's in, the decisions that aren't obvious from the code,
 and the traps that will cost you an hour if nobody warns you.
 
 **Branch:** `windows-port` on `github.com/scythe000/NTSCRT` (a fork of
-`finnmckenty/NTSCRT`). 45 commits, ~13,000 lines of Rust/WGSL under `windows/`
+`finnmckenty/NTSCRT`). 47 commits, ~13,000 lines of Rust/WGSL under `windows/`
 plus the release workflow in `.github/`. Everything below is pushed.
+
+**Name.** The app is **VHS-Studio**. It started as "NTSCRT for Windows" and
+was renamed once it had grown features the macOS app doesn't have (the
+colour grade, bundled ffmpeg, the About box) — the owner's call, on the
+grounds that it is now its own program. Crates are `vhs-studio-core` and
+`vhs-studio-app`, binaries `vhs-studio.exe` and `vhs-studio-smoke.exe`,
+environment variables `VHS_STUDIO_*`, the zip `VHS-Studio-<version>-windows-x64`.
+"NTSCRT" in this document and the code means the **macOS original** it came
+from, which is credited in the README, the About box and
+`vhs-studio-smoke --version`. Where you still see "the Mac" or "the macOS
+app", that is NTSCRT. The icon is still NTSCRT's (`Assets/icon-source.png`)
+— a VHS-Studio icon is on the to-do list. The preset file format is
+unchanged and still moves between the two apps.
 
 The first 14 commits built the port headlessly. The next batch was a second
 pass with a screen: the GUI was run on a Linux desktop, looked at, and fixed,
@@ -22,10 +35,11 @@ grade was still added in a way that keeps preset files loadable both ways.
 
 ## 1. What this is
 
-NTSCRT makes an image or video look like it's playing on a 1980s TV. It runs
-media through [ntsc-rs](https://github.com/ntsc-rs/ntsc-rs) (analog signal
-emulation) and then RetroArch's CRT shaders via
-[librashader](https://github.com/SnowflakePowered/librashader).
+VHS-Studio makes an image or video look like it's playing on a 1980s TV. It
+runs media through [ntsc-rs](https://github.com/ntsc-rs/ntsc-rs) (analog
+signal emulation), a colour grade, and then RetroArch's CRT shaders via
+[librashader](https://github.com/SnowflakePowered/librashader). It is the
+Windows descendant of [NTSCRT](https://github.com/finnmckenty/NTSCRT).
 
 ```
 source → rotate → NTSC/VHS degradation (full res, CPU) → downscale → colour grade → CRT shader → output
@@ -34,8 +48,8 @@ source → rotate → NTSC/VHS degradation (full res, CPU) → downscale → col
 The colour grade is this build's own stage; everything else is the Mac's
 chain.
 
-The original is a **macOS SwiftUI/Metal app** in `Sources/`. This is a
-**Windows rewrite** in `windows/`, not a port of the Swift.
+The original, NTSCRT, is a **macOS SwiftUI/Metal app** in `Sources/`. This
+is a **Windows rewrite** in `windows/`, not a port of the Swift.
 
 **Why a rewrite:** the two libraries doing the image work are already
 cross-platform Rust, so they carry over untouched. The ~9,000 lines of Swift
@@ -83,12 +97,12 @@ counterpart in its header comment. Port *behaviour*, not frameworks.
 | Preview pacing (timeline at its fps, Animate at 30) | ✅ on screen: readout advances 0.5 s per 0.5 s |
 | Preset load is a clean slate, incl. on a playing video | ✅ on screen: Glitch 1 → Clean VHS mid-playback |
 | No VC++ Redistributable needed (crt-static) | ✅ CI check in `package.ps1` passes; `objdump -p` on the artifact shows no MSVCP140 / VCRUNTIME140 imports |
-| Colour-grade stage (`ntscrt-core/src/grade.rs`, `gpu/grade.{rs,wgsl}`, `ui/grade_panel.rs`) | ✅ GPU pass matches the CPU reference within 0.5/255; panel driven on screen; keyframes and presets carry it |
+| Colour-grade stage (`vhs-studio-core/src/grade.rs`, `gpu/grade.{rs,wgsl}`, `ui/grade_panel.rs`) | ✅ GPU pass matches the CPU reference within 0.5/255; panel driven on screen; keyframes and presets carry it |
 | Eight colour presets (B&W, Solarized, Inverted, Blade Runner, Max Headroom, Neon, Red/Cyan highlight) | ✅ smoke-rendered side by side and loaded in the GUI; a pre-grade preset loaded after one turns the stage off |
 | ffmpeg bundled beside the exe (pinned build, SHA-256 checked) | ✅ CI on `windows-latest`: digest ok, staged copy is the one resolved, ffmpeg 8.1.2 runs; 143 MB zip |
-| About box (version, commit, date, GPU, ffmpeg, libraries; Copy; F1) + version in the title + `ntscrt-smoke --version` | ✅ on screen; report copied to the clipboard |
+| About box (version, commit, date, GPU, ffmpeg, libraries; Copy; F1) + version in the title + `vhs-studio-smoke --version` | ✅ on screen; report copied to the clipboard |
 
-**173 tests, zero warnings.** 62 in `ntscrt-core`, 111 in `ntscrt-app`.
+**173 tests, zero warnings.** 62 in `vhs-studio-core`, 111 in `vhs-studio-app`.
 
 ### Parity with the macOS app
 
@@ -101,7 +115,7 @@ behavioural difference closed, except the ones listed under "Known gaps":
   `appShaderDefaults` (BOOST/GLOW_ROLLOFF/BLOOM_STRENGTH on the two Glow
   shaders). Windows was opening on the raw defaults, so the two apps looked
   different out of the box. Now `NtscStage::house()` /
-  `HOUSE_DEFAULTS_JSON` in `ntscrt-core/src/ntsc.rs` and
+  `HOUSE_DEFAULTS_JSON` in `vhs-studio-core/src/ntsc.rs` and
   `presets::HOUSE_SHADER_DEFAULTS` carry the same values; the app, the
   headless renderer and Reset all use them. The default shader is
   `glow_gauss`, as on the Mac (it was `royale`).
@@ -150,7 +164,7 @@ from the workflow is the thing to run first.
   unsigned download.
 - **The bundled ffmpeg has been run on a Windows *runner*, not a desktop.**
   [Run 34984713862](https://github.com/scythe000/NTSCRT/actions/runs/34984713862)'s
-  Package step downloaded it, matched the digest, and `ntscrt-smoke --ffmpeg`
+  Package step downloaded it, matched the digest, and `vhs-studio-smoke --ffmpeg`
   from the staged folder reported both tools "bundled beside the app" with
   `ffmpeg version n8.1.2-52-g5a03dfa0f6` — so the shared DLLs load. A real
   video decode/export with it on a desktop is still to do.
@@ -178,7 +192,7 @@ from the workflow is the thing to run first.
 ```
 windows/
   Cargo.toml              workspace; pins wgpu 30 / eframe 0.36 / egui 0.36
-  ntscrt-core/            platform-neutral. No GPU, no windowing.
+  vhs-studio-core/            platform-neutral. No GPU, no windowing.
     ntsc.rs               ntsc-rs signal stage (replaces Vendor/ntscrs-capi)
     downscale.rs          method + spec model
     scanline.rs           supersample / snap math  (ScanlineGrid.swift)
@@ -186,7 +200,7 @@ windows/
     grade.rs              colour-grade model + CPU reference (Windows addition)
     timeline.rs           keyframes + interpolation (Timeline.swift)
     settings_ui.rs        re-exports ntsc-rs's settings schema
-  ntscrt-app/
+  vhs-studio-app/
     gpu/
       downscale.wgsl      the MSL kernels from Downscaler.swift, transliterated
       downscaler.rs       wgpu side of the downscale stage
@@ -206,7 +220,7 @@ windows/
     app_preset.rs         preset JSON load/save
     param_gates.rs        shader param gating       (ParamGates.swift)
     render.rs             HeadlessRenderer, FrameSequence — the export path
-    bin/smoke.rs          ntscrt-smoke, the headless verifier
+    bin/smoke.rs          vhs-studio-smoke, the headless verifier
     about.rs              build description (from build.rs env vars); ui/about_window.rs shows it
   ffmpeg-bundle.json      the pinned ffmpeg build package.ps1 ships
   package.ps1             stage + zip, incl. the ffmpeg download and checks
@@ -215,7 +229,7 @@ windows/
 .github/workflows/windows.yml   build, test, package; release on v* tags
 ```
 
-Two binaries: `ntscrt.exe` (the app) and `ntscrt-smoke.exe` (the verifier).
+Two binaries: `vhs-studio.exe` (the app) and `vhs-studio-smoke.exe` (the verifier).
 
 In `ui/`: `mod.rs` holds the toolbar (including `export_control`, the
 button-that-becomes-a-progress-bar), status bar, export panel and the shared
@@ -241,12 +255,12 @@ workload, and ffmpeg on PATH (this machine has it at `C:\ffmpeg\bin`).
 unoptimised; dependencies are optimised even in debug for the same reason.
 
 ```powershell
-pwsh windows/package.ps1            # → windows/dist/NTSCRT-<version>-windows-x64.zip
+pwsh windows/package.ps1            # → windows/dist/VHS-Studio-<version>-windows-x64.zip
 ```
 
-The script runs the tests, builds, stages `ntscrt.exe`, `ntscrt-smoke.exe`,
+The script runs the tests, builds, stages `vhs-studio.exe`, `vhs-studio-smoke.exe`,
 `shaders/` (the whole slang-shaders tree minus `.git`), `presets/` and the
-README, runs `ntscrt-smoke --list-shaders` *from the staged folder* to prove
+README, runs `vhs-studio-smoke --list-shaders` *from the staged folder* to prove
 the beside-the-exe lookup works, and zips. The workflow does the same on
 `windows-latest` and attaches the zip to a Release for a `v*` tag.
 
@@ -259,7 +273,7 @@ On Ubuntu with an X11 desktop:
 sudo apt-get install -y g++ libstdc++-13-dev mesa-vulkan-drivers ffmpeg xdotool
 cd windows
 CXX=g++ CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=gcc cargo build --release
-./target/release/ntscrt ../TestAssets/game-frame.png     # or NTSCRT_SOURCE=…
+./target/release/vhs-studio ../TestAssets/game-frame.png     # or VHS_STUDIO_SOURCE=…
 ```
 
 - `Cargo.toml` enables eframe's `x11` feature for Linux only; without it
@@ -269,47 +283,47 @@ CXX=g++ CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=gcc cargo build --release
   `spirv-cross-sys` are C++. Plain gcc toolchains don't need them.
 - `mesa-vulkan-drivers` gives wgpu `lavapipe`, a software Vulkan device, so
   it runs with no GPU. Slowly, but correctly.
-- `NTSCRT_SOURCE=<file>` or a positional argument opens a file at launch;
-  `NTSCRT_EXPORT=<dest>` starts an export at launch so the progress UI can be
+- `VHS_STUDIO_SOURCE=<file>` or a positional argument opens a file at launch;
+  `VHS_STUDIO_EXPORT=<dest>` starts an export at launch so the progress UI can be
   seen without clicking through a file dialog.
 - Drive it with `xdotool` (`mousemove x y click 1`, `keydown alt` + `click 4`
   for Alt+scroll, etc.) and capture with `ffmpeg -f x11grab`. Screenshot
   coordinates are in screen pixels; if you scale the shot down to read it,
   scale your clicks back up.
 
-### ntscrt-smoke is your most valuable tool
+### vhs-studio-smoke is your most valuable tool
 
 It drives the identical pipeline with no window, so you can verify work
 without a screen. Learn it before changing anything.
 
 ```powershell
 # Inventory
-ntscrt-smoke --list-shaders            # which shaders resolve here
-ntscrt-smoke --list-presets            # bundled presets and what they set
-ntscrt-smoke --list-params royale      # a shader's params, ranges, defaults
-ntscrt-smoke --timeline "Very wavy"    # evaluate a preset's animation
-ntscrt-smoke --timeline "Gltch 3" --watch head_switching_horizontal_shift
+vhs-studio-smoke --list-shaders            # which shaders resolve here
+vhs-studio-smoke --list-presets            # bundled presets and what they set
+vhs-studio-smoke --list-params royale      # a shader's params, ranges, defaults
+vhs-studio-smoke --timeline "Very wavy"    # evaluate a preset's animation
+vhs-studio-smoke --timeline "Gltch 3" --watch head_switching_horizontal_shift
 
 # Render
-ntscrt-smoke in.png out.png --shader royale --downscale 320 --height 960
-ntscrt-smoke in.png out.png --preset "Medium VHS" --rotate 90
+vhs-studio-smoke in.png out.png --shader royale --downscale 320 --height 960
+vhs-studio-smoke in.png out.png --preset "Medium VHS" --rotate 90
 
 # Video
-ntscrt-smoke clip.mp4 --video-info
-ntscrt-smoke clip.mp4 --playback 96           # throughput, drops, cache hits
-ntscrt-smoke clip.mp4 --export out.mp4 --format h264 --quality high
-ntscrt-smoke clip.mp4 --export out.gif --format gif --gif-width 480 --gif-fps 12
-ntscrt-smoke still.png --export out.mp4 --still-frames 48    # VHS motion
-ntscrt-smoke clip.mp4 --export out.mp4 --cancel-after 10     # cancel path
+vhs-studio-smoke clip.mp4 --video-info
+vhs-studio-smoke clip.mp4 --playback 96           # throughput, drops, cache hits
+vhs-studio-smoke clip.mp4 --export out.mp4 --format h264 --quality high
+vhs-studio-smoke clip.mp4 --export out.gif --format gif --gif-width 480 --gif-fps 12
+vhs-studio-smoke still.png --export out.mp4 --still-frames 48    # VHS motion
+vhs-studio-smoke clip.mp4 --export out.mp4 --cancel-after 10     # cancel path
 ```
 
 **A regression check that takes 30 seconds:**
 
 ```bash
 for s in aperture easymode glow_gauss glow_lanczos hyllian royale sim; do
-  ntscrt-smoke TestAssets/game-frame.png /tmp/r-$s.png --shader $s --downscale 320 --height 720
+  vhs-studio-smoke TestAssets/game-frame.png /tmp/r-$s.png --shader $s --downscale 320 --height 720
 done
-ntscrt-smoke /tmp/clip.mp4 --playback 72
+vhs-studio-smoke /tmp/clip.mp4 --playback 72
 ```
 
 ---
@@ -415,7 +429,7 @@ ignored.
 
 ### The grade is one flat parameter set, on the chain input
 
-`ntscrt_core::grade` defines the controls as a table (`GRADE_PARAMS`: name,
+`vhs_studio_core::grade` defines the controls as a table (`GRADE_PARAMS`: name,
 label, range, default, step) and the stage's state as `Grade { enabled,
 values: BTreeMap<String, f32> }`. Flat named floats — the same shape as
 shader parameters — so keyframes interpolate them, presets store them and
@@ -437,7 +451,7 @@ a colour edit costs one chain-input-sized pass and invalidates nothing
 `Pipeline` records `last_chain_input` *before* the grade, so the cache
 keeps ungraded frames.
 
-`grade_pixel` in `ntscrt-core` is a CPU reference of the shader, same math
+`grade_pixel` in `vhs-studio-core` is a CPU reference of the shader, same math
 in the same order. It is what the unit tests check presets against, and
 the GPU was checked against it with a throwaway comparison (max 0.5/255).
 **If you change one, change the other.** `RenderRequest::grade` is
@@ -446,7 +460,7 @@ every pre-grade preset skips the pass entirely.
 
 ### ffmpeg is bundled, pinned and verified
 
-`video/ffmpeg.rs` resolves each tool as: `NTSCRT_FFMPEG`/`NTSCRT_FFPROBE`
+`video/ffmpeg.rs` resolves each tool as: `VHS_STUDIO_FFMPEG`/`VHS_STUDIO_FFPROBE`
 override → a copy **beside our own executable** → the bare name on PATH.
 The zip puts ffmpeg there. `package.ps1` reads `ffmpeg-bundle.json` (BtbN
 release tag, asset name, SHA-256), downloads to `target/ffmpeg-bundle/`
@@ -456,7 +470,7 @@ release tag, asset name, SHA-256), downloads to `target/ffmpeg-bundle/`
 in `av*.dll`, about half the size of the static build; GPL because the
 H.264/HEVC exports use libx264/libx265, which the LGPL variant lacks. ffmpeg
 is run as a separate process, so the app's own licence is unaffected. On
-Windows the script then runs `ntscrt-smoke --ffmpeg` from the staged folder
+Windows the script then runs `vhs-studio-smoke --ffmpeg` from the staged folder
 and requires both tools to report "bundled beside the app". `-NoFFmpeg`
 skips all of it. To upgrade, change the three fields in the JSON — pick a
 dated `autobuild-*` release, not the rolling `latest`, or the digest will
@@ -537,7 +551,7 @@ breaks the day a shader gains an include; the full tree is 65 MB of text
 that zips to well under half of that. `shaders/` beside the exe is the first
 place `presets::shaders_root` looks.
 
-### House defaults live in `ntscrt-core`, as data
+### House defaults live in `vhs-studio-core`, as data
 
 `AppState.appNtscDefaults` was reproduced as `HOUSE_DEFAULTS_JSON`, a
 partial ntsc-rs preset overlaid on the library defaults. ntsc-rs's own
@@ -573,15 +587,15 @@ it the exe imports `MSVCP140.dll` / `VCRUNTIME140.dll` / `VCRUNTIME140_1.dll`
 Visual C++ Redistributable — installed on most PCs by something else, absent
 on a clean one, and the app dies on launch with a "missing DLL" dialog.
 `package.ps1` byte-searches both exes for those names and refuses to zip if
-they appear. To check an artifact from Linux: `objdump -p ntscrt.exe | grep
+they appear. To check an artifact from Linux: `objdump -p vhs-studio.exe | grep
 "DLL Name"` — the `api-ms-win-crt-*` entries are the UCRT and are fine (part
 of Windows 10). This was found by inspecting the CI artifact; the setting
 was not verified on a clean Windows install.
 
 ### The build describes itself through `build.rs`
 
-`about.rs` reads `NTSCRT_GIT_HASH`, `NTSCRT_BUILD_DATE`, `NTSCRT_TARGET`
-and four `NTSCRT_DEP_*` variables that `build.rs` emits with
+`about.rs` reads `VHS_STUDIO_GIT_HASH`, `VHS_STUDIO_BUILD_DATE`, `VHS_STUDIO_TARGET`
+and four `VHS_STUDIO_DEP_*` variables that `build.rs` emits with
 `cargo:rustc-env`. The hash is `git rev-parse --short=9 HEAD` with
 `-dirty` appended when `git status --porcelain -- .` (the `windows/` tree
 only) is non-empty — so a build from an edited tree says so, which is the
@@ -737,7 +751,9 @@ is done. What's left, roughly in order of value:
    (`chainCache`) so switching back is instant; Windows recompiles
    (crt-royale takes a couple of seconds). Parameter values already survive
    the switch, so this is purely time.
-7. **More grade controls, if wanted.** Candidates: posterize, vignette,
+7. **An icon of its own.** `build.rs` still renders NTSCRT's
+   `Assets/icon-source.png`; point `ICON_SOURCE` at a VHS-Studio one.
+8. **More grade controls, if wanted.** Candidates: posterize, vignette,
    a "grade before the signal stage" switch (see Known gaps for its cost),
    and a proper HSV hue for the colour highlight instead of the I/Q angle.
 
@@ -745,7 +761,7 @@ is done. What's left, roughly in order of value:
 
 ### The grade has a CPU twin — keep them in step
 
-`gpu/grade.wgsl` and `ntscrt_core::grade::grade_pixel` are the same
+`gpu/grade.wgsl` and `vhs_studio_core::grade::grade_pixel` are the same
 function twice. The tests only see the CPU one. A change to the shader that
 isn't mirrored passes every test and silently renders differently from what
 the presets were tuned against. Check with the smoke tool: render with
@@ -770,7 +786,7 @@ Worth keeping, because the codebase is consistent about them:
 - **Every ported module names its Swift counterpart** in the header.
 - **Tests cover pure logic thoroughly** — easing, interpolation, scanline
   math, rotation, preset round-trips, GIF timing. GPU paths are verified with
-  `ntscrt-smoke` instead.
+  `vhs-studio-smoke` instead.
 - **Never claim something was verified if it wasn't.** §2 says exactly what
   the GUI pass covered (Linux, software Vulkan, `xdotool`) and what it
   didn't (a Windows desktop). Keep following it — a handoff that overstates

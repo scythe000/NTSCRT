@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "The ffmpeg build package.ps1 ships beside ntscrt.exe. A pinned, dated",
+    "The ffmpeg build package.ps1 ships beside vhs-studio.exe. A pinned, dated",
     "autobuild from BtbN/FFmpeg-Builds rather than the rolling 'latest' asset,",
     "so the zip is reproducible and the digest below can be checked. The",
     "'shared' variant is used: small ffmpeg.exe/ffprobe.exe plus the av*.dll",

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["ntscrt-core", "ntscrt-app"]
+members = ["vhs-studio-core", "vhs-studio-app"]
 
 [workspace.package]
 version = "0.1.0"
