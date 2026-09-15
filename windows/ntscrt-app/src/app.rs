@@ -724,9 +724,27 @@ impl NtscrtApp {
 
         // Swap the shader before pushing parameters — the chain owns them,
         // and a chain for the wrong preset would reject the names.
+        //
+        // A preset is a clean slate: every parameter opens on its default
+        // and then takes the preset's value, so nothing dialled in before —
+        // by hand or by the last preset — shows through where this one is
+        // silent. That means neither restoring what was stashed for this
+        // shader nor keeping the current values when the shader is the same.
         self.shader_enabled = preset.shader.enabled;
         if crate::presets::find(&preset.shader.preset).is_some() {
-            self.select_shader(&preset.shader.preset, device, queue);
+            self.saved_shader_params.remove(&preset.shader.preset);
+            if self.shader_id != preset.shader.preset {
+                self.select_shader(&preset.shader.preset, device, queue);
+            } else {
+                let defaults: Vec<(String, f32)> = self
+                    .shader_param_meta
+                    .iter()
+                    .map(|p| (p.name.clone(), self.shader_default(&p.name, p.initial, None)))
+                    .collect();
+                for (name, v) in defaults {
+                    self.set_shader_param(&name, v);
+                }
+            }
             let mut unknown = 0usize;
             for (name, value) in &preset.shader.params {
                 if self.shader_params.contains_key(name) {
@@ -760,22 +778,33 @@ impl NtscrtApp {
             let n = preset.timeline.as_ref().map(|t| t.keys.len()).unwrap_or(0);
             notes.push(format!("{n} keyframes"));
         }
+        // The previous preset's keyframes go with it, whether or not this
+        // one has any. The bar shows or hides as the preset saved it (the
+        // Mac's `timelineEnabled`)...
+        if let Some(tl) = preset.timeline.as_ref() {
+            self.timeline_open = tl.enabled;
+        }
         self.timeline = preset.timeline;
         self.timeline_playing = false;
-        // A preset carrying keyframes opens the timeline, whether or not it
-        // was open when the preset was saved — otherwise the animation is
-        // loaded but invisible, and the preset looks like it did nothing.
-        // On a still it also starts previewing, since the animation *is*
-        // the look; a video's transport owns playback.
+        // ...except that a preset carrying keyframes always opens it —
+        // otherwise the animation is loaded but invisible, and the preset
+        // looks like it did nothing. On a still it also starts previewing,
+        // since the animation *is* the look; a video's transport owns
+        // playback.
         if keyed {
             self.timeline_open = true;
             if self.video.is_none() {
                 self.timeline_playing = true;
             }
         }
-        self.scrub_timeline(0.0);
 
-        self.mark_dirty();
+        // Everything upstream of the shader has changed, so on a video the
+        // playback producer needs the new settings and animation, and every
+        // cached frame — baked with the old look — is stale. Plain
+        // `mark_dirty` would leave the previous preset playing back from the
+        // cache until the next edit.
+        self.mark_chain_input_edited();
+        self.scrub_timeline(0.0);
         (!notes.is_empty()).then(|| notes.join(" \u{2014} "))
     }
 
