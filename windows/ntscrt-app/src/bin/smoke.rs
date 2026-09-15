@@ -28,6 +28,7 @@ USAGE:
     ntscrt-smoke <input-image|video> <output.png> [options]
     ntscrt-smoke --list-shaders
     ntscrt-smoke --list-params [shader-id]
+    ntscrt-smoke --list-grade
     ntscrt-smoke --list-presets
     ntscrt-smoke --timeline <preset> [--watch <ntsc-setting>]
     ntscrt-smoke --video-info <file>
@@ -43,6 +44,8 @@ OPTIONS:
     --rotate <deg>        Rotate the source before the pipeline: 0, 90, 180, 270.
     --no-ntsc             Skip the NTSC/VHS signal stage.
     --no-shader           Skip the CRT shader: write the chain input, nearest-scaled.
+    --grade name=value    Set a colour-grade control (and turn the stage on); repeatable.
+                          --list-grade for the names, ranges and defaults.
     --ntsc-preset <file>  ntsc-rs preset JSON (interchangeable with the ntsc-rs app).
     --frame <n>           Frame index: the deterministic RNG's seed, and which
                           frame is decoded when the input is a video (default: 0).
@@ -382,6 +385,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         return Ok(());
     }
+    if args.first().is_some_and(|a| a == "--list-grade") {
+        println!("colour grade: {} controls", ntscrt_core::GRADE_PARAMS.len());
+        for p in ntscrt_core::GRADE_PARAMS {
+            println!("  {:<20} {:>7} .. {:<7} = {:<7} {}", p.name, p.minimum, p.maximum, p.default, p.label);
+        }
+        return Ok(());
+    }
     if args.is_empty() || args.iter().any(|a| a == "-h" || a == "--help") {
         print!("{USAGE}");
         return Ok(());
@@ -441,6 +451,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             "--no-ntsc" => settings.ntsc_enabled = false,
             "--no-shader" => settings.shader_enabled = false,
+            "--grade" => {
+                let v = value("--grade")?;
+                let (name, val) = v
+                    .split_once('=')
+                    .ok_or_else(|| format!("--grade wants name=value, got '{v}'"))?;
+                if ntscrt_core::grade_param(name).is_none() {
+                    return Err(format!("unknown grade control '{name}' (see --list-grade)").into());
+                }
+                settings.grade.enabled = true;
+                settings.grade.set(name, val.parse()?);
+            }
             "--downscale" => {
                 let v = value("--downscale")?;
                 settings.downscale_width =
@@ -482,6 +503,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 settings.timeline = p.timeline.clone();
+                settings.grade = p.grade.clone();
                 preset_params = p.shader.params.into_iter().collect();
             }
             other if other.starts_with("--") => {

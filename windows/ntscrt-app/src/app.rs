@@ -71,6 +71,12 @@ pub struct NtscrtApp {
     /// one restores what was dialled in rather than its defaults.
     saved_shader_params: HashMap<String, HashMap<String, f32>>,
 
+    // ---- grade ----
+    /// Colour grade on the chain input — this build's own stage, see
+    /// `ntscrt_core::grade`. Edits never touch the frame cache: the grade
+    /// runs after everything the cache stores.
+    pub grade: ntscrt_core::Grade,
+
     // ---- video ----
     /// The clip, when the source is a video rather than a still. Playback,
     /// the frame cache and the transport bar all live behind this — see
@@ -165,6 +171,7 @@ impl NtscrtApp {
             ntsc: NtscStage::house(),
             video: None,
             shader_enabled: true,
+            grade: ntscrt_core::Grade::default(),
             // The macOS build opens on CRT Glow (Gaussian) too.
             shader_id: "glow_gauss".to_string(),
             shader_params: HashMap::new(),
@@ -411,6 +418,36 @@ impl NtscrtApp {
         self.dirty = true;
     }
 
+    /// Set one colour-grade control. Cached video frames stay valid: the
+    /// grade runs on the cached chain input, not before it.
+    pub fn set_grade_param(&mut self, name: &str, value: f32) {
+        self.grade.set(name, value);
+        self.leave_preset();
+        self.mark_dirty();
+    }
+
+    pub fn set_grade_enabled(&mut self, on: bool) {
+        if self.grade.enabled != on {
+            self.grade.enabled = on;
+            self.leave_preset();
+            self.mark_dirty();
+        }
+    }
+
+    /// Every grade control back to its default; the switch stays as it is.
+    pub fn reset_grade(&mut self) {
+        self.grade.reset();
+        self.leave_preset();
+        self.mark_dirty();
+        self.auto_key_if_parked();
+    }
+
+    /// The grade packed for a render request: None when it would change
+    /// nothing, so the pass is skipped.
+    pub fn grade_uniform(&self) -> Option<[f32; ntscrt_core::GRADE_UNIFORM_LEN]> {
+        (!self.grade.is_identity()).then(|| self.grade.uniform())
+    }
+
     /// Turn the CRT shader on or off. Cached video frames stay valid: they
     /// hold the chain *input*, which the shader only reads.
     pub fn set_shader_enabled(&mut self, on: bool) {
@@ -478,6 +515,7 @@ impl NtscrtApp {
         let downscale = self.downscale_spec();
         let ntsc_enabled = self.ntsc_enabled;
         let shader_enabled = self.shader_enabled;
+        let grade = self.grade_uniform();
         let frame_count = self.frame_count;
         let source_version = self.source_version;
         let id = self.preview_texture.as_ref().unwrap().3;
@@ -523,6 +561,7 @@ impl NtscrtApp {
             downscale,
             ntsc_enabled,
             shader_enabled,
+            grade,
             frame_count,
             source_version,
             prepared_chain_input: prepared,
@@ -687,6 +726,7 @@ impl NtscrtApp {
             },
             rotation: self.rotation,
             timeline: self.timeline.clone(),
+            grade: self.grade.clone(),
         }
     }
 
@@ -761,6 +801,11 @@ impl NtscrtApp {
         } else {
             notes.push(format!("unknown shader '{}'", preset.shader.preset));
         }
+
+        // Presets from before the stage carry no grade section and load with
+        // it off — the default — which is the clean slate the rest of this
+        // function promises.
+        self.grade = preset.grade.clone();
 
         // Every preset animates on load, whatever its own `view.animate`
         // says. These looks are built out of tape noise, jitter and
@@ -953,6 +998,7 @@ impl NtscrtApp {
             ntsc_preset_json: self.ntsc.settings_json().ok(),
             shader_id: self.shader_id.clone(),
             shader_params: self.shader_params.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+            grade: self.grade.clone(),
             output_height: self.export_output_size().1,
             snap_to_scanline_grid: self.snap_to_scanline_grid,
             frame_count: self.frame_count,

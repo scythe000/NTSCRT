@@ -2,6 +2,7 @@
 
 pub mod chain;
 pub mod downscaler;
+pub mod grade;
 pub mod pipeline;
 
 pub use chain::ShaderChain;

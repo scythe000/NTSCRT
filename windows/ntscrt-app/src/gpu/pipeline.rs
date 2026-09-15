@@ -4,8 +4,11 @@
 //! Signal order, unchanged from the macOS build:
 //!
 //! ```text
-//! source → NTSC/VHS degradation (full res, CPU) → downscale → CRT shader → output
+//! source → NTSC/VHS degradation (full res, CPU) → downscale → grade → CRT shader → output
 //! ```
+//!
+//! The grade is this build's own addition (`ntscrt_core::grade`): a colour
+//! pass on the chain input, downstream of everything the frame cache keeps.
 //!
 //! The NTSC stage runs on the CPU at the source's full resolution — matching
 //! how ntsc-rs is used standalone, so its `scale_settings` can size artifacts
@@ -21,6 +24,7 @@ use ntscrt_core::{DownscaleSpec, NtscStage, PixelFormat, ScanlineGrid};
 
 use super::chain::ShaderChain;
 use super::downscaler::{Downscaler, WORK_FORMAT};
+use super::grade::GradePass;
 
 /// Everything needed to render one frame.
 pub struct RenderRequest<'a> {
@@ -34,6 +38,10 @@ pub struct RenderRequest<'a> {
     /// Off bypasses the CRT shader: the chain input is scaled to the output
     /// with nearest sampling instead, showing the signal stage on its own.
     pub shader_enabled: bool,
+    /// Colour grade, packed for the GPU (`Grade::uniform`). None skips the
+    /// pass — the caller checks `Grade::is_identity`, so a preset from
+    /// before the stage costs nothing.
+    pub grade: Option<[f32; ntscrt_core::GRADE_UNIFORM_LEN]>,
     /// Drives ntsc-rs's deterministic RNG and the shaders' animation uniforms.
     pub frame_count: usize,
     /// Identifies the source contents so the NTSC stage can skip re-copying
@@ -53,6 +61,7 @@ pub struct RenderRequest<'a> {
 
 pub struct Pipeline {
     downscaler: Downscaler,
+    grade: GradePass,
     /// Staging buffer for the NTSC stage, reused across frames.
     ntsc_buf: Vec<u8>,
     /// Texture the chain reads: either the uploaded source or the downscale
@@ -73,6 +82,7 @@ impl Pipeline {
     pub fn new(device: &wgpu::Device) -> Self {
         Self {
             downscaler: Downscaler::new(device),
+            grade: GradePass::new(device),
             ntsc_buf: Vec::new(),
             chain_input: None,
             upload: None,
@@ -218,7 +228,15 @@ impl Pipeline {
                 (tex, size)
             }
         };
+        // The cache keeps the *ungraded* chain input: the grade is cheap to
+        // rerun and is the one stage a user dials while a video plays.
         self.last_chain_input = Some(chain_input.clone());
+
+        // ---- colour grade ----
+        let chain_input = match request.grade.as_ref() {
+            Some(uniform) => self.grade.encode(device, encoder, &chain_input, uniform),
+            None => chain_input,
+        };
         let chain_input = &chain_input;
 
         if !request.shader_enabled {

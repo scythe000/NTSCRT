@@ -157,6 +157,10 @@ impl NtscrtApp {
                 self.set_shader_param(&name, value);
             }
         }
+        // Empty when the keys predate the grade stage: leave it as it is.
+        for (name, value) in ev.grade_values(t) {
+            self.grade.set(&name, value);
+        }
         self.mark_dirty();
     }
 
@@ -175,6 +179,7 @@ impl NtscrtApp {
             .unwrap_or_default();
         let shader: BTreeMap<String, f32> =
             self.shader_params.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let grade = self.grade.all_values();
         let t = self.playhead;
 
         let tl = self.timeline_mut();
@@ -183,9 +188,10 @@ impl NtscrtApp {
                 // Keep the easing already chosen for this key.
                 tl.keys[i].ntsc = ntsc;
                 tl.keys[i].shader = shader;
+                tl.keys[i].grade = grade;
             }
             None => {
-                tl.keys.push(Keyframe { t, easing: Easing::Linear, shader, ntsc });
+                tl.keys.push(Keyframe { t, easing: Easing::Linear, shader, ntsc, grade });
                 tl.keys.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
             }
         }
@@ -220,9 +226,11 @@ impl NtscrtApp {
             .unwrap_or_default();
         let shader: BTreeMap<String, f32> =
             self.shader_params.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let grade = self.grade.all_values();
         let tl = self.timeline_mut();
         tl.keys[i].ntsc = ntsc;
         tl.keys[i].shader = shader;
+        tl.keys[i].grade = grade;
     }
 
     /// Index of the keyframe under the playhead, if any.

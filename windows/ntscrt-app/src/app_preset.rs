@@ -5,8 +5,12 @@
 //! and anything saved here opens on a Mac.
 //!
 //! ```text
-//! { downscale, ntsc, shader, view, timeline, version }
+//! { downscale, ntsc, shader, grade, view, timeline, version }
 //! ```
+//!
+//! `grade` is this build's colour-grade stage (`ntscrt_core::grade`), which
+//! the macOS app does not have: it ignores the key, and a file without it
+//! loads here with the stage off.
 //!
 //! `ntsc.settings` is ntsc-rs's own preset object, carrying its own version —
 //! it passes straight through to the signal stage untouched, which is what
@@ -36,6 +40,14 @@ pub struct AppPreset {
     /// Keyframe animation. Absent in a preset that has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeline: Option<ntscrt_core::Timeline>,
+    /// Colour grade. Absent in presets from before the stage, and in
+    /// anything the macOS build writes; both load with the stage off.
+    #[serde(default, skip_serializing_if = "grade_is_default")]
+    pub grade: ntscrt_core::Grade,
+}
+
+fn grade_is_default(g: &ntscrt_core::Grade) -> bool {
+    *g == ntscrt_core::Grade::default()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -152,6 +164,7 @@ mod tests {
             },
             view: ViewSection::default(),
             rotation: ntscrt_core::Rotation::None,
+            grade: ntscrt_core::Grade::default(),
             timeline: Some(ntscrt_core::Timeline {
                 duration: 2.0,
                 fps: 30.0,
@@ -161,6 +174,7 @@ mod tests {
                     easing: ntscrt_core::Easing::Linear,
                     shader: Default::default(),
                     ntsc: Default::default(),
+                    grade: Default::default(),
                 }],
             }),
         }
@@ -229,6 +243,24 @@ mod tests {
         let p: AppPreset = serde_json::from_str(json).unwrap();
         assert!(!p.view.animate);
         assert!(p.view.integer_scale);
+    }
+
+    #[test]
+    fn grade_round_trips_and_is_off_when_absent() {
+        let mut p = sample();
+        p.grade.enabled = true;
+        p.grade.set("saturation", 0.0);
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("\"grade\""));
+        let back: AppPreset = serde_json::from_str(&json).unwrap();
+        assert!(back.grade.enabled);
+        assert_eq!(back.grade.get("saturation"), 0.0);
+
+        // A default grade is not written, so old-format readers see nothing new.
+        let plain = serde_json::to_string(&sample()).unwrap();
+        assert!(!plain.contains("\"grade\""));
+        let back: AppPreset = serde_json::from_str(&plain).unwrap();
+        assert!(!back.grade.enabled);
     }
 
     #[test]

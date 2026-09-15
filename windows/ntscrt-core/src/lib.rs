@@ -10,6 +10,7 @@
 //! directly — same effect, same preset JSON, one less boundary.
 
 pub mod downscale;
+pub mod grade;
 pub mod ntsc;
 pub mod rotation;
 pub mod scanline;
@@ -17,6 +18,7 @@ pub mod settings_ui;
 pub mod timeline;
 
 pub use downscale::{DownscaleMethod, DownscaleSpec};
+pub use grade::{grade_param, grade_pixel, Grade, GradeParam, GRADE_PARAMS, GRADE_UNIFORM_LEN};
 pub use ntsc::{NtscStage, PixelFormat};
 pub use rotation::{rotate_rgba, rotate_rgba_into, Rotation};
 pub use scanline::ScanlineGrid;

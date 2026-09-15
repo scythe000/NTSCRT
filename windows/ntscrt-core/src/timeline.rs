@@ -90,6 +90,10 @@ pub struct Keyframe {
     /// ntsc-rs settings, the same object shape the preset's static block uses.
     #[serde(default)]
     pub ntsc: serde_json::Map<String, serde_json::Value>,
+    /// Colour-grade controls by name. Empty in keys written before the
+    /// stage existed, which the evaluator reads as "leave the grade alone".
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub grade: BTreeMap<String, f32>,
 }
 
 /// The timeline as stored in a preset.
@@ -311,6 +315,26 @@ impl TimelineEvaluator {
     pub fn ntsc_json(&self, t: f64) -> String {
         serde_json::Value::Object(self.ntsc_values(t)).to_string()
     }
+
+    /// Colour-grade controls at `t`, clamped to each control's range. Empty
+    /// when the bracketing keys carry no grade (keys from before the stage),
+    /// so callers keep the live values rather than resetting them.
+    pub fn grade_values(&self, t: f64) -> BTreeMap<String, f32> {
+        let (a, b, u) = self.segment(t);
+        if u == 0.0 || b.grade.is_empty() {
+            return a.grade.clone();
+        }
+        let mut out = BTreeMap::new();
+        for (name, va) in &a.grade {
+            let vb = b.grade.get(name).copied().unwrap_or(*va);
+            let mut v = va + (vb - va) * u as f32;
+            if let Some(p) = crate::grade::grade_param(name) {
+                v = v.clamp(p.minimum, p.maximum);
+            }
+            out.insert(name.clone(), v);
+        }
+        out
+    }
 }
 
 #[cfg(test)]
@@ -328,6 +352,7 @@ mod tests {
             easing,
             shader: [("CURVATURE".to_string(), param)].into_iter().collect(),
             ntsc,
+            grade: BTreeMap::new(),
         }
     }
 
@@ -342,6 +367,24 @@ mod tests {
         .into_iter()
         .collect();
         TimelineEvaluator::new(&tl, BTreeMap::new(), interp).unwrap()
+    }
+
+    #[test]
+    fn grade_values_interpolate_and_old_keys_leave_the_grade_alone() {
+        let mut a = key(0.0, Easing::Linear, 0.0, 0.0);
+        let mut b = key(1.0, Easing::Linear, 0.0, 0.0);
+        a.grade.insert("saturation".into(), 1.0);
+        a.grade.insert("invert".into(), 0.0);
+        b.grade.insert("saturation".into(), 0.0);
+        b.grade.insert("invert".into(), 1.0);
+        let ev = evaluator(vec![a, b]);
+        let mid = ev.grade_values(0.5);
+        assert!((mid["saturation"] - 0.5).abs() < 1e-6);
+        assert!((mid["invert"] - 0.5).abs() < 1e-6);
+
+        // Keys written before the stage existed carry no grade at all.
+        let ev = evaluator(vec![key(0.0, Easing::Linear, 0.0, 0.0), key(1.0, Easing::Linear, 0.0, 0.0)]);
+        assert!(ev.grade_values(0.5).is_empty());
     }
 
     // ---- easing ----

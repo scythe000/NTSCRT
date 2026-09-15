@@ -33,6 +33,8 @@ pub struct RenderSettings {
     /// shader doesn't expose are ignored — a preset written against a
     /// different shader build shouldn't fail the whole render.
     pub shader_params: Vec<(String, f32)>,
+    /// Colour grade on the chain input. Default is off.
+    pub grade: ntscrt_core::Grade,
     pub output_height: u32,
     /// Round the output onto the scanline grid instead of supersampling.
     pub snap_to_scanline_grid: bool,
@@ -51,6 +53,7 @@ impl Default for RenderSettings {
             ntsc_preset_json: None,
             shader_id: "royale".to_string(),
             shader_params: Vec::new(),
+            grade: ntscrt_core::Grade::default(),
             output_height: 960,
             snap_to_scanline_grid: false,
             frame_count: 0,
@@ -72,6 +75,8 @@ pub struct FrameSequence {
     downscale: Option<DownscaleSpec>,
     ntsc_enabled: bool,
     shader_enabled: bool,
+    /// Current grade; the evaluator rewrites it per frame when keyed.
+    grade: ntscrt_core::Grade,
     /// Built once from the timeline plus the chain's own parameter bounds,
     /// then read per frame.
     evaluator: Option<ntscrt_core::TimelineEvaluator>,
@@ -285,6 +290,7 @@ impl HeadlessRenderer {
             downscale,
             ntsc_enabled: settings.ntsc_enabled,
             shader_enabled: settings.shader_enabled,
+            grade: settings.grade.clone(),
             evaluator,
             timeline_frames,
         })
@@ -317,7 +323,11 @@ impl HeadlessRenderer {
             for (name, value) in ev.shader_params(t) {
                 sequence.chain.set_parameter(&name, value);
             }
+            for (name, value) in ev.grade_values(t) {
+                sequence.grade.set(&name, value);
+            }
         }
+        let grade = (!sequence.grade.is_identity()).then(|| sequence.grade.uniform());
 
         let mut encoder = self
             .device
@@ -335,6 +345,7 @@ impl HeadlessRenderer {
                 downscale: sequence.downscale,
                 ntsc_enabled: sequence.ntsc_enabled,
                 shader_enabled: sequence.shader_enabled,
+                grade,
                 frame_count,
                 // No version means "these are new pixels": the stage snapshots
                 // them rather than restoring the previous frame's.
@@ -357,6 +368,7 @@ impl HeadlessRenderer {
         chain_input: &wgpu::Texture,
         frame_count: usize,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let grade = (!sequence.grade.is_identity()).then(|| sequence.grade.uniform());
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("ntscrt.render.cached"),
         });
@@ -374,6 +386,7 @@ impl HeadlessRenderer {
                 downscale: None,
                 ntsc_enabled: false,
                 shader_enabled: sequence.shader_enabled,
+                grade,
                 frame_count,
                 source_version: 0,
                 prepared_chain_input: Some(chain_input),
