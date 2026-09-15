@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-const ICON_SOURCE: &str = "../../Assets/icon-source.png";
+const ICON_SOURCE: &str = "../Assets/icon-source.png";
 
 /// Sizes Explorer and the taskbar actually pick from. 256 is the ceiling the
 /// ICO format allows per entry.
@@ -114,7 +114,7 @@ fn describe_build() {
         }
     }
     let hash = git(&["rev-parse", "--short=9", "HEAD"]).unwrap_or_else(|| "unknown".into());
-    let dirty = git(&["status", "--porcelain", "--untracked-files=no", "--", "."])
+    let dirty = git(&["status", "--porcelain", "--untracked-files=no"])
         .map(|s| !s.is_empty())
         .unwrap_or(false);
     println!("cargo:rustc-env=VHS_STUDIO_GIT_HASH={hash}{}", if dirty { "-dirty" } else { "" });

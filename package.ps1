@@ -3,9 +3,8 @@
 Build a distributable VHS-Studio: a zip that runs from any folder.
 
 .DESCRIPTION
-The Windows counterpart of scripts/make-release.sh. Runs the tests, builds
-release binaries, then stages everything the app looks for beside its
-executable (see vhs-studio-app/src/presets.rs):
+Runs the tests, builds release binaries, then stages everything the app
+looks for beside its executable (see vhs-studio-app/src/presets.rs):
 
     VHS-Studio-<version>-windows-x64/
         vhs-studio.exe          the app
@@ -16,7 +15,7 @@ executable (see vhs-studio-app/src/presets.rs):
         shaders/            the slang-shaders tree (crt/, include/, blurs/, ...)
         presets/            the bundled look presets
         licenses/           FFmpeg's licence and where its source is
-        README.md
+        README.md GUIDE.md  the front page and the full guide
 
 The whole slang-shaders tree ships rather than the seven presets' files
 because .slang sources #include across directories (include/, misc/,
@@ -32,7 +31,7 @@ It is a GPL build (the app's H.264/HEVC exports need libx264/libx265), run
 as a separate process; its licence ships in licenses/.
 
 .PARAMETER Out
-Where to put the staged folder and the zip. Default: dist/ under windows/.
+Where to put the staged folder and the zip. Default: dist/ in the repository.
 
 .PARAMETER NoFFmpeg
 Leave ffmpeg out of the zip. The app then needs ffmpeg on PATH for video
@@ -45,7 +44,7 @@ Skip `cargo test --release`. For iterating on the packaging itself.
 Reuse target/release as it stands.
 
 .EXAMPLE
-pwsh windows/package.ps1
+pwsh ./package.ps1
 #>
 [CmdletBinding()]
 param(
@@ -58,8 +57,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$windows = $PSScriptRoot
-$repo = Resolve-Path (Join-Path $windows '..')
+$repo = $PSScriptRoot
 $shadersSource = Join-Path $repo 'Vendor/slang-shaders'
 $presetsSource = Join-Path $repo 'presets'
 
@@ -67,7 +65,7 @@ if (-not (Test-Path (Join-Path $shadersSource 'crt'))) {
     throw "Vendor/slang-shaders is empty. Run: git submodule update --init --depth 1 Vendor/ntsc-rs Vendor/slang-shaders"
 }
 
-Push-Location $windows
+Push-Location $repo
 try {
     $meta = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
     $version = ($meta.packages | Where-Object name -eq 'vhs-studio-app').version
@@ -86,7 +84,7 @@ try {
 
     # `$IsWindows` is PowerShell 6+; this also runs under Windows PowerShell 5.
     $exeSuffix = if ($env:OS -eq 'Windows_NT') { '.exe' } else { '' }
-    $bin = Join-Path $windows 'target/release'
+    $bin = Join-Path $repo 'target/release'
     foreach ($name in 'vhs-studio', 'vhs-studio-smoke') {
         if (-not (Test-Path (Join-Path $bin "$name$exeSuffix"))) {
             throw "target/release/$name$exeSuffix is missing; build first or drop -SkipBuild"
@@ -104,7 +102,8 @@ try {
 
     Copy-Item (Join-Path $bin "vhs-studio$exeSuffix") $stage
     Copy-Item (Join-Path $bin "vhs-studio-smoke$exeSuffix") $stage
-    Copy-Item (Join-Path $windows 'README.md') $stage
+    Copy-Item (Join-Path $repo 'README.md') $stage
+    Copy-Item (Join-Path $repo 'docs/GUIDE.md') $stage
 
     # The shader tree, minus its .git. Copy-Item has no exclude-directory, so
     # walk the files and rebuild the relative paths.
@@ -125,12 +124,12 @@ try {
 
     if (-not $NoFFmpeg) {
         Write-Host '== bundling ffmpeg ==' -ForegroundColor Cyan
-        $pin = Get-Content (Join-Path $windows 'ffmpeg-bundle.json') -Raw | ConvertFrom-Json
+        $pin = Get-Content (Join-Path $repo 'ffmpeg-bundle.json') -Raw | ConvertFrom-Json
         $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/$($pin.release)/$($pin.asset)"
         # Cached under target/ (ignored by git) so repeated packaging doesn't
         # re-download 90 MB; the digest check below decides whether the cached
         # file is usable.
-        $cacheDir = Join-Path $windows 'target/ffmpeg-bundle'
+        $cacheDir = Join-Path $repo 'target/ffmpeg-bundle'
         New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
         $archive = Join-Path $cacheDir $pin.asset
         $fresh = $false

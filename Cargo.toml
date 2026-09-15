@@ -1,6 +1,10 @@
 [workspace]
 resolver = "2"
 members = ["vhs-studio-core", "vhs-studio-app"]
+# The ntsc-rs submodule is its own Cargo workspace; without this, cargo would
+# treat its crates as members of ours (they sit under this directory) and
+# fail resolving their `lints.workspace = true`.
+exclude = ["Vendor"]
 
 [workspace.package]
 version = "0.1.0"

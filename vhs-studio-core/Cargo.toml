@@ -6,6 +6,6 @@ description = "Platform-neutral VHS-Studio pipeline: ntsc-rs signal stage, downs
 license = "MIT OR ISC OR Apache-2.0"
 
 [dependencies]
-ntsc-rs = { path = "../../Vendor/ntsc-rs/crates/ntscrs" }
+ntsc-rs = { path = "../Vendor/ntsc-rs/crates/ntscrs" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

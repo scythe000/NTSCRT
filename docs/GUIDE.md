@@ -19,10 +19,9 @@ bundled presets and most of its design. It has since become its own program
 — a colour-grade stage, bundled ffmpeg and other things the Mac app doesn't
 have — so it has its own name. The macOS NTSCRT app lives upstream at
 [finnmckenty/NTSCRT](https://github.com/finnmckenty/NTSCRT); this repository
-is VHS-Studio, with the app under `windows/`. As with NTSCRT: all the actual image magic
-belongs to ntsc-rs and the RetroArch shader community.
+is VHS-Studio. As with NTSCRT: all the actual image magic belongs to ntsc-rs and the RetroArch shader community.
 
-> **Picking this up?** [HANDOFF.md](HANDOFF.md) has the current state, the
+> **Picking this up?** [HANDOFF.md](../HANDOFF.md) has the current state, the
 > decisions that aren't obvious from the code, and the API traps (egui 0.36,
 > wgpu 30, librashader 0.12) that will otherwise cost you an hour each.
 
@@ -87,11 +86,10 @@ exactly for a bug report. You never need it to use the app; see
 # signal stage, slang-shaders holds the CRT presets themselves.
 git submodule update --init --depth 1 Vendor/ntsc-rs Vendor/slang-shaders
 
-cd windows
 cargo build --release
 ```
 
-Two binaries land in `windows/target/release/`:
+Two binaries land in `target/release/`:
 
 - `vhs-studio.exe` — the app
 - `vhs-studio-smoke.exe` — headless verifier, the counterpart of the macOS `crt-smoke`
@@ -107,11 +105,11 @@ gets the default icon.
 ### Package
 
 ```powershell
-pwsh windows/package.ps1        # tests, builds, stages and zips
+pwsh ./package.ps1        # tests, builds, stages and zips
 ```
 
-Produces `windows/dist/VHS-Studio-<version>-windows-x64.zip` with both binaries,
-the shader tree, the presets, this README and ffmpeg, after checking that the
+Produces `dist/VHS-Studio-<version>-windows-x64.zip` with both binaries,
+the shader tree, the presets, the README, this guide and ffmpeg, after checking that the
 seven shaders resolve from the staged folder and that the staged ffmpeg is the
 one the app finds. The ffmpeg is a pinned build — release tag, asset name and
 SHA-256 in `ffmpeg-bundle.json` — downloaded from

@@ -5,8 +5,9 @@ port is, what state it's in, the decisions that aren't obvious from the code,
 and the traps that will cost you an hour if nobody warns you.
 
 **Branch:** `windows-port` on `github.com/scythe000/NTSCRT` (a fork of
-`finnmckenty/NTSCRT`). 51 commits, ~13,000 lines of Rust/WGSL under `windows/`
-plus the release workflow in `.github/`. Everything below is pushed.
+`finnmckenty/NTSCRT`). 53 commits, ~13,000 lines of Rust/WGSL at the
+repository root plus the release workflow in `.github/`. Everything below is
+pushed.
 
 **Name.** The app is **VHS-Studio**. It started as "NTSCRT for Windows" and
 was renamed once it had grown features the macOS app doesn't have (the
@@ -55,7 +56,7 @@ chain.
 
 The original, NTSCRT, is a **macOS SwiftUI/Metal app**
 ([finnmckenty/NTSCRT](https://github.com/finnmckenty/NTSCRT)). This is a
-**Windows rewrite** in `windows/`, not a port of the Swift.
+**Windows rewrite**, not a port of the Swift.
 
 **Why a rewrite:** the two libraries doing the image work are already
 cross-platform Rust, so they carry over untouched. The ~9,000 lines of Swift
@@ -88,11 +89,21 @@ C ABI the Swift called ntsc-rs through — Rust needs none), `Assets/AppIcon.icn
 `NTSCRT july 27.webp`, and a `CertificateSigningRequest.certSigningRequest`
 that should never have been committed (a CSR carries no private key, but it
 is still in history). `.gitignore` is now the Rust/Windows one. What the
-Windows build depends on outside `windows/` and stayed: `presets/`, the two
+Windows build depends on outside its own tree and stayed: `presets/`, the two
 submodules, `Assets/icon-source.png`, `TestAssets/` (the smoke examples use
 them), `docs/vhs-studio-header.webp`, `.github/`. Verified after the removal
 by a clean clone → `cargo build --release` → `cargo test` → `package.ps1`
 on the Windows runner.
+
+**The `windows/` directory is gone too.** With the Mac app removed there was
+nothing else at the root, so the Cargo workspace moved up: `Cargo.toml`,
+`vhs-studio-core/`, `vhs-studio-app/`, `.cargo/`, `package.ps1`,
+`ffmpeg-bundle.json` and this file live at the repository root, and the
+full user guide (the old `windows/README.md`) is `docs/GUIDE.md`. `cargo`
+and `package.ps1` run from the root; the workflow lost its
+`working-directory: windows`. Relative paths that changed: the `ntsc-rs`
+path dependency (`../Vendor/...`), `ICON_SOURCE` in `build.rs`, and the
+artifact paths in the workflow (`dist/*.zip`).
 
 ---
 
@@ -227,7 +238,7 @@ from the workflow is the thing to run first.
 ## 3. Layout
 
 ```
-windows/
+<repository root>
   Cargo.toml              workspace; pins wgpu 30 / eframe 0.36 / egui 0.36
   vhs-studio-core/            platform-neutral. No GPU, no windowing.
     ntsc.rs               ntsc-rs signal stage (replaces Vendor/ntscrs-capi)
@@ -294,7 +305,7 @@ workload, and ffmpeg on PATH (this machine has it at `C:\ffmpeg\bin`).
 unoptimised; dependencies are optimised even in debug for the same reason.
 
 ```powershell
-pwsh windows/package.ps1            # → windows/dist/VHS-Studio-<version>-windows-x64.zip
+pwsh ./package.ps1                  # → dist/VHS-Studio-<version>-windows-x64.zip
 ```
 
 The script runs the tests, builds, stages `vhs-studio.exe`, `vhs-studio-smoke.exe`,
@@ -310,9 +321,8 @@ On Ubuntu with an X11 desktop:
 
 ```bash
 sudo apt-get install -y g++ libstdc++-13-dev mesa-vulkan-drivers ffmpeg xdotool
-cd windows
 CXX=g++ CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=gcc cargo build --release
-./target/release/vhs-studio ../TestAssets/game-frame.png     # or VHS_STUDIO_SOURCE=…
+./target/release/vhs-studio TestAssets/game-frame.png     # or VHS_STUDIO_SOURCE=…
 ```
 
 - `Cargo.toml` enables eframe's `x11` feature for Linux only; without it
@@ -690,8 +700,8 @@ was not verified on a clean Windows install.
 `about.rs` reads `VHS_STUDIO_GIT_HASH`, `VHS_STUDIO_BUILD_DATE`, `VHS_STUDIO_TARGET`
 and four `VHS_STUDIO_DEP_*` variables that `build.rs` emits with
 `cargo:rustc-env`. The hash is `git rev-parse --short=9 HEAD` with
-`-dirty` appended when `git status --porcelain -- .` (the `windows/` tree
-only) is non-empty — so a build from an edited tree says so, which is the
+`-dirty` appended when `git status --porcelain --untracked-files=no` (the
+whole checkout, submodules included) is non-empty — so a build from an edited tree says so, which is the
 whole point when the question is "which exe is this". `build.rs` emits
 `rerun-if-changed` for `.git/HEAD` and the branch ref it points to, so a
 new commit rebuilds the crate; a dirty→clean transition without a commit

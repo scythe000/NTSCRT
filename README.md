@@ -16,9 +16,9 @@ Grab `VHS-Studio-<version>-windows-x64.zip` from [**Releases**](../../releases/l
 
 **Requirements:** Windows 10 or 11, 64-bit, with a GPU that supports Direct3D 12 or Vulkan (anything from the last decade).
 
-> **"Windows protected your PC".** The download isn't code-signed yet, so SmartScreen shows this the first time you run it. Click **More info → Run anyway**; it asks once per build. To avoid it altogether, right-click the zip before extracting → **Properties** → tick **Unblock** → OK: that removes the "downloaded from the internet" mark that SmartScreen keys on, and the extracted files inherit the cleared state. (Extracting with 7-Zip has the same effect.) A signed build is on the list — see the note in [`windows/HANDOFF.md`](windows/HANDOFF.md).
+> **"Windows protected your PC".** The download isn't code-signed yet, so SmartScreen shows this the first time you run it. Click **More info → Run anyway**; it asks once per build. To avoid it altogether, right-click the zip before extracting → **Properties** → tick **Unblock** → OK: that removes the "downloaded from the internet" mark that SmartScreen keys on, and the extracted files inherit the cleared state. (Extracting with 7-Zip has the same effect.) A signed build is on the list — see the note in [`HANDOFF.md`](HANDOFF.md).
 
-The **[full guide](windows/README.md)** covers every panel and control. In short:
+The **[full guide](docs/GUIDE.md)** covers every panel and control. In short:
 
 - **Open** (Ctrl+O) an image (PNG, JPEG, WebP, HEIC, AVIF…) or a video (MP4, MOV, MKV…), or drop one on the window.
 - **Presets** — 25 bundled looks from *Clean CRT* to *Obliterated*, including eight colour looks (*Black & white*, *Solarized*, *Inverted*, *Blade Runner*, *Max Headroom*, *Neon*, two colour highlights) and eight that animate. Save your own as JSON.
@@ -37,23 +37,25 @@ The macOS app itself lives upstream at [finnmckenty/NTSCRT](https://github.com/f
 
 | Path | What |
 |---|---|
-| [`windows/`](windows/) | **VHS-Studio** — the Rust workspace (`vhs-studio-core`, `vhs-studio-app`), packaging script, [README](windows/README.md) and [HANDOFF](windows/HANDOFF.md) |
+| `vhs-studio-core/`, `vhs-studio-app/` | **VHS-Studio** — the Rust workspace: the platform-neutral pipeline maths, and the wgpu/egui app with its headless verifier |
+| `package.ps1`, `ffmpeg-bundle.json` | the packaging script CI runs, and the pinned FFmpeg build it bundles |
+| [`HANDOFF.md`](HANDOFF.md) | the whole story of the code, for whoever works on it next |
 | `presets/` | the 25 bundled presets (the format is NTSCRT's, so files move between the two apps) |
 | `Vendor/ntsc-rs`, `Vendor/slang-shaders` | git submodules: the signal-emulation crate the app builds against, and the RetroArch shader tree it ships |
 | `Assets/` | `icon-source.png`, from which `build.rs` generates the Windows icon |
 | `TestAssets/` | two small test frames for `vhs-studio-smoke` |
-| `docs/` | the README's header image |
+| `docs/` | the [full guide](docs/GUIDE.md) and the README's header image |
 
 ## Building from source
 
 ```powershell
 git clone --recurse-submodules https://github.com/scythe000/NTSCRT
-cd NTSCRT\windows
+cd NTSCRT
 cargo build --release
 .\target\release\vhs-studio.exe
 ```
 
-Needs a Rust toolchain (`rustup`, stable) and the Visual Studio Build Tools' C++ workload; the app links the C runtime statically, so the result runs on any Windows machine. `.\package.ps1` stages a release folder with ffmpeg and zips it — the same script CI runs. `vhs-studio-smoke.exe` is a headless verifier that renders frames and reports what it finds, handy for bug reports. See [windows/README.md](windows/README.md#build) for details and [windows/HANDOFF.md](windows/HANDOFF.md) for the whole story of the code.
+Needs a Rust toolchain (`rustup`, stable) and the Visual Studio Build Tools' C++ workload; the app links the C runtime statically, so the result runs on any Windows machine. `.\package.ps1` stages a release folder with ffmpeg and zips it — the same script CI runs. `vhs-studio-smoke.exe` is a headless verifier that renders frames and reports what it finds, handy for bug reports. See [the guide](docs/GUIDE.md#build) for details and [HANDOFF.md](HANDOFF.md) for the whole story of the code.
 
 ## Limitations
 
