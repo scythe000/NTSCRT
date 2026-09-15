@@ -40,6 +40,13 @@ serde_json = "1"
 log = "0.4"
 env_logger = "0.11"
 
+# Linux is a verification target, not a shipping one: the GUI was checked on
+# an X11 desktop with Mesa's software Vulkan driver. winit needs a windowing
+# backend feature there that Windows doesn't; this adds nothing to the
+# Windows build.
+[target.'cfg(target_os = "linux")'.dependencies]
+eframe = { version = "0.36.2", default-features = false, features = ["wgpu", "default_fonts", "x11"] }
+
 [build-dependencies]
 # Embeds the app icon and marks the binary DPI-aware / per-monitor v2.
 winresource = "0.1"
