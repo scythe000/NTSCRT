@@ -120,7 +120,8 @@ staged as `ffmpeg.exe`, `ffprobe.exe` and the `av*`/`sw*` DLLs (the shared
 build; the static one is twice the size). It is a GPL build because the
 H.264/HEVC exports use libx264/libx265; the app runs it as a separate
 program, and its licence and a notice ship in `licenses/`. `-NoFFmpeg` leaves
-it out. Bundling roughly doubles the zip, to about 150 MB; in return the app
+it out. ffmpeg is most of the zip (about 96 MB in all, now that the shaders
+are inside the exe rather than a 77 MB tree); in return the app
 runs on a machine with nothing installed, and every install decodes and
 encodes with the same ffmpeg (an old PATH copy would silently lose HEIC). To
 move to a newer ffmpeg, change the three fields in `ffmpeg-bundle.json`. The same script runs in CI: the

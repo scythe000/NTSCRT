@@ -139,7 +139,7 @@ artifact paths in the workflow (`dist/*.zip`).
 | Eight colour presets (B&W, Solarized, Inverted, Blade Runner, Max Headroom, Neon, Red/Cyan highlight) | ✅ smoke-rendered side by side and loaded in the GUI; now stackable colour layers (checkboxes) over any look |
 | ffmpeg bundled beside the exe (pinned build, SHA-256 checked) | ✅ CI on `windows-latest`: digest ok, staged copy is the one resolved, ffmpeg 8.1.2 runs; 143 MB zip |
 | About box (version, commit, date, libraries; Copy; F1) + version in the title + `vhs-studio-smoke --version` (adds ffmpeg) | ✅ on screen; report copied to the clipboard |
-| Shaders embedded as one pack (70 files / 0.7 MB in the exe, replacing a 4,963-file `shaders/`) | ✅ all seven render byte-identically from the pack and from the full tree; unpack 5 ms once; `package.ps1` asserts the staged exe uses it; needs the Windows runner to confirm the zip size |
+| Shaders embedded as one pack (70 files / 0.7 MB in the exe, replacing a 4,963-file `shaders/`) | ✅ all seven render byte-identically from the pack and from the full tree; unpack 5 ms once; `package.ps1` asserts the staged exe uses it; [CI run](https://github.com/scythe000/NTSCRT/actions/runs/35033655482) on `windows-latest` green from a clean clone, zip 143 → 96 MB |
 
 **185 tests, zero warnings.** 62 in `vhs-studio-core`, 123 in `vhs-studio-app`.
 
@@ -680,7 +680,10 @@ instances racing never leaves a half tree that looks complete; a
 `.complete` marker inside is what later launches check. Measured: 5 ms on
 the first run, nothing after. The hash (`SHADER_PACK_ID`, FNV-1a of the
 pack bytes, computed in `build.rs`) means a new build never reads a stale
-extraction; old directories are not cleaned up (each is 1.2 MB).
+extraction; old directories are not cleaned up (each is 1.2 MB). The hash
+differs between a Linux and a Windows build of the same commit because the
+Windows runner checks the submodule out with CRLF line endings; the
+shaders compile the same either way, as they did when the tree shipped.
 
 Lookup order in `shaders_root_and_source`: `VHS_STUDIO_SHADERS`, then
 `shaders/` beside the exe, then the pack, then the walk up to
