@@ -184,7 +184,50 @@ pub fn show(app: &mut VhsStudioApp, root: &mut egui::Ui, rs: Option<&RenderState
             egui::FontId::monospace(11.0),
             egui::Color32::from_white_alpha(110),
         );
+
+        loading_overlay(app, ui, rect);
     });
+}
+
+/// While a file is being opened on the loader thread, a card in the middle
+/// of the preview says so. The previous picture stays underneath — the
+/// swap happens only when the decode finishes — so without this the window
+/// looks as if the Open did nothing until it suddenly does.
+fn loading_overlay(app: &VhsStudioApp, ui: &mut egui::Ui, rect: egui::Rect) {
+    let Some(task) = &app.load_task else { return };
+    let name = task.file_name();
+    let seconds = task.started.elapsed().as_secs_f32();
+    egui::Area::new(egui::Id::new("vhs-studio.loading"))
+        .order(egui::Order::Foreground)
+        .pivot(egui::Align2::CENTER_CENTER)
+        .fixed_pos(rect.center())
+        .interactable(false)
+        .show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style())
+                .fill(egui::Color32::from_black_alpha(200))
+                .inner_margin(egui::Margin::symmetric(18, 14))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Spinner::new().size(22.0));
+                        ui.vertical(|ui| {
+                            // The card sizes to its text; wrapping would
+                            // break the name mid-word.
+                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                            ui.label(egui::RichText::new(format!("Opening {name}\u{2026}")).strong());
+                            let detail = if crate::video::is_video_path(&task.path) {
+                                "Probing the clip and decoding its first frame"
+                            } else {
+                                "Decoding the image"
+                            };
+                            ui.label(
+                                egui::RichText::new(format!("{detail} \u{00B7} {seconds:.0} s"))
+                                    .small()
+                                    .weak(),
+                            );
+                        });
+                    });
+                });
+        });
 }
 
 /// The untouched source, uploaded as a plain egui texture for the compare

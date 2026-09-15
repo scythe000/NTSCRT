@@ -101,9 +101,7 @@ pub fn top_bar(app: &mut VhsStudioApp, root: &mut egui::Ui, rs: Option<&RenderSt
     egui::Panel::top("toolbar").show(root, |ui| {
         ui.horizontal(|ui| {
             ui.add_space(4.0);
-            if ui.button("Open\u{2026}").on_hover_text("Ctrl+O").clicked() {
-                pick_source(app);
-            }
+            open_control(app, ui);
             export_control(app, ui);
 
             ui.separator();
@@ -235,8 +233,24 @@ pub fn top_bar(app: &mut VhsStudioApp, root: &mut egui::Ui, rs: Option<&RenderSt
     let _ = rs;
 }
 
+/// The toolbar's Open button and, while a file is being opened on the
+/// loader thread, a spinner with the file's name beside it. Open stays
+/// enabled: picking another file simply replaces the one in flight.
+fn open_control(app: &mut VhsStudioApp, ui: &mut egui::Ui) {
+    if ui.button("Open\u{2026}").on_hover_text("Ctrl+O").clicked() {
+        pick_source(app);
+    }
+    if let Some(task) = &app.load_task {
+        let name = task.file_name();
+        let seconds = task.started.elapsed().as_secs_f32();
+        ui.add(egui::Spinner::new().size(16.0));
+        ui.label(egui::RichText::new(format!("Opening {name}\u{2026}")).small())
+            .on_hover_text(format!("{} \u{2014} {seconds:.0} s so far", task.path.display()));
+    }
+}
+
 /// The toolbar's Export button, which says what it will write, and — while
-/// a movie export runs — turns into its progress and a Cancel, so the export
+/// an export runs — turns into its progress and a Cancel, so the export
 /// is visible with every panel closed, as the macOS toolbar does.
 fn export_control(app: &mut VhsStudioApp, ui: &mut egui::Ui) {
     if let Some(task) = &app.export_task {
@@ -244,7 +258,7 @@ fn export_control(app: &mut VhsStudioApp, ui: &mut egui::Ui) {
         let cancelling = task.is_cancelling();
         let text = if cancelling {
             "Cancelling\u{2026}".to_string()
-        } else if total > 0 {
+        } else if total > 1 {
             format!("Exporting {}%", (task.fraction() * 100.0).round() as u32)
         } else {
             "Exporting\u{2026}".to_string()
@@ -458,9 +472,15 @@ fn source_panel(app: &mut VhsStudioApp, ui: &mut egui::Ui) {
                 app.set_rotation(chosen);
             });
 
-            if ui.button("Open\u{2026}").clicked() {
-                pick_source(app);
-            }
+            ui.horizontal(|ui| {
+                if ui.button("Open\u{2026}").clicked() {
+                    pick_source(app);
+                }
+                if let Some(task) = &app.load_task {
+                    ui.add(egui::Spinner::new().size(14.0));
+                    ui.label(egui::RichText::new(format!("Opening {}\u{2026}", task.file_name())).small());
+                }
+            });
             ui.label(
                 egui::RichText::new("Drag & drop a file onto the window works too.")
                     .small()
@@ -532,8 +552,10 @@ fn export_panel(app: &mut VhsStudioApp, ui: &mut egui::Ui) {
                 ui.label(
                     egui::RichText::new(if cancelling {
                         "Cancelling\u{2026}".to_string()
-                    } else if total > 0 {
+                    } else if total > 1 {
                         format!("{done} / {total} frames")
+                    } else if total == 1 {
+                        "Rendering the still\u{2026}".to_string()
                     } else {
                         "Starting\u{2026}".to_string()
                     })

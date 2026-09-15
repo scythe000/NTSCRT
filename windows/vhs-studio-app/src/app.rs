@@ -107,8 +107,10 @@ pub struct VhsStudioApp {
     /// Movie export settings. Ignored when the source is a still and
     /// `export_still_frames` is None — that case writes a PNG.
     pub export_job: crate::video::ExportJob,
-    /// A movie export running on its own thread, if any.
+    /// An export running on its own thread, if any — a movie or a PNG.
     pub export_task: Option<ExportTask>,
+    /// A file being opened on its own thread, if any.
+    pub load_task: Option<crate::app_load::LoadTask>,
     /// Name of the preset currently loaded, so the Preset menu can tick it.
     /// Cleared as soon as any setting it controls is edited — a tick that
     /// survives edits would claim the preset is still what you are seeing.
@@ -195,6 +197,7 @@ impl VhsStudioApp {
             snap_to_scanline_grid: false,
             export_job: crate::video::ExportJob::default(),
             export_task: None,
+            load_task: None,
             active_preset: None,
             export_still_frames: None,
             pipeline,
@@ -234,7 +237,7 @@ impl VhsStudioApp {
 
     /// Rebuild `source` from the unrotated original. Stills only — video
     /// frames arrive already rotated.
-    fn rebuild_rotation(&mut self) {
+    pub(crate) fn rebuild_rotation(&mut self) {
         let Some(original) = self.original_source.as_ref() else { return };
         if self.rotation == Rotation::None {
             self.source = original.clone();
@@ -298,33 +301,6 @@ impl VhsStudioApp {
 
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
-    }
-
-    pub fn load_source(&mut self, path: PathBuf) {
-        // Videos take the whole other path: decoder, playback, frame cache.
-        if crate::video::is_video_path(&path) {
-            self.load_video(path);
-            return;
-        }
-        self.video = None;
-        match SourceImage::load(&path) {
-            Ok(img) => {
-                self.status = Some(format!(
-                    "Loaded {} ({}x{})",
-                    path.file_name().unwrap_or_default().to_string_lossy(),
-                    img.width,
-                    img.height
-                ));
-                self.original_source = Some(img);
-                self.rebuild_rotation();
-                self.source_path = Some(path);
-                self.source_version += 1;
-                self.ntsc.invalidate();
-                self.error = None;
-                self.dirty = true;
-            }
-            Err(e) => self.error = Some(format!("Could not open {}: {e}", path.display())),
-        }
     }
 
     pub fn reload_chain(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
@@ -655,6 +631,12 @@ impl eframe::App for VhsStudioApp {
         if self.export_task.is_some() {
             ctx.request_repaint();
         }
+        // Likewise a file being opened: poll for the result and keep the
+        // spinner turning meanwhile.
+        self.poll_load();
+        if self.load_task.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
 
         let render_state = frame.wgpu_render_state().cloned();
 
@@ -959,12 +941,17 @@ impl VhsStudioApp {
 
         match result {
             Ok(s) => {
+                // A PNG is one frame; "1 frames" would read as a movie.
+                let frames = if s.frames == 1 {
+                    String::new()
+                } else {
+                    format!(", {} frames", s.frames)
+                };
                 self.status = Some(format!(
-                    "Exported {} ({}x{}, {} frames{}, {:.1} MB)",
+                    "Exported {} ({}x{}{frames}{}, {:.1} MB)",
                     task.dest.display(),
                     s.width,
                     s.height,
-                    s.frames,
                     match s.audio {
                         crate::video::AudioMode::None => "",
                         crate::video::AudioMode::Copied => ", audio copied",
@@ -1013,21 +1000,68 @@ impl VhsStudioApp {
         }
     }
 
+    /// Write the current still as a PNG, on its own thread.
+    ///
+    /// One frame, but a fresh headless device and a shader compile come
+    /// first — seconds with crt-royale — so it goes through the same
+    /// [`ExportTask`] as a movie and the toolbar shows it as an export in
+    /// progress. The summary it reports is a movie's with one frame.
     pub(crate) fn export_png(&mut self, dest: PathBuf) {
+        if self.export_task.is_some() {
+            self.error = Some("An export is already running".into());
+            return;
+        }
         let settings = self.render_settings();
-        // A separate headless device keeps the export off the presenting
-        // device, so a long render cannot stall the UI's swapchain.
-        match crate::HeadlessRenderer::new()
-                        // The original, not `effective_source()`: `settings.rotation`
-            // makes the renderer do the turn, and doing both would rotate
-            // twice.
-            .and_then(|mut r| r.render_to_png(&self.source, &settings, &dest))
-        {
-            Ok((w, h)) => {
-                self.status = Some(format!("Exported {} ({w}x{h})", dest.display()));
+        // The original, not `effective_source()`: `settings.rotation` makes
+        // the renderer do the turn, and doing both would rotate twice.
+        let source = self.source.clone();
+
+        let shared = Arc::new(Mutex::new(ExportProgress::default()));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let worker_shared = Arc::clone(&shared);
+        let worker_cancel = Arc::clone(&cancel);
+        let worker_dest = dest.clone();
+
+        let handle = std::thread::Builder::new()
+            .name("vhs-studio.export".into())
+            .spawn(move || {
+                if let Ok(mut p) = worker_shared.lock() {
+                    p.total = 1;
+                }
+                // A separate headless device keeps the export off the
+                // presenting device, so a long render cannot stall the UI's
+                // swapchain.
+                let result = crate::HeadlessRenderer::new()
+                    .and_then(|mut r| r.render_to_png(&source, &settings, &worker_dest))
+                    .and_then(|(width, height)| {
+                        // One frame cannot stop midway; a Cancel that landed
+                        // while it rendered means "don't keep the file".
+                        if worker_cancel.load(Ordering::Relaxed) {
+                            let _ = std::fs::remove_file(&worker_dest);
+                            return Err("Export cancelled".into());
+                        }
+                        Ok(crate::video::ExportSummary {
+                            frames: 1,
+                            width,
+                            height,
+                            fps: 0.0,
+                            bytes: std::fs::metadata(&worker_dest).map(|m| m.len()).unwrap_or(0),
+                            audio: crate::video::AudioMode::None,
+                        })
+                    });
+                if let Ok(mut p) = worker_shared.lock() {
+                    p.done = 1;
+                    p.finished = Some(result.map_err(|e| e.to_string()));
+                }
+            });
+
+        match handle {
+            Ok(handle) => {
+                self.status = Some(format!("Exporting {}...", dest.display()));
                 self.error = None;
+                self.export_task = Some(ExportTask { progress: shared, cancel, handle, dest });
             }
-            Err(e) => self.error = Some(format!("Export failed: {e}")),
+            Err(e) => self.error = Some(format!("Could not start export: {e}")),
         }
     }
 }

@@ -121,31 +121,15 @@ impl VideoState {
 }
 
 impl VhsStudioApp {
-    /// Open a video as the source, replacing whatever was loaded.
-    pub(crate) fn load_video(&mut self, path: std::path::PathBuf) {
-        // ffmpeg is the one external runtime dependency in this build, so say
-        // so plainly rather than letting a spawn failure surface as a decode
-        // error on every file the user tries.
-        if let Err(e) = crate::video::ffmpeg::probe_tools() {
-            self.error = Some(e);
-            return;
-        }
-        let video = match VideoSource::open(&path) {
-            Ok(v) => v,
-            Err(e) => {
-                self.error = Some(format!("Could not open {}: {e}", path.display()));
-                return;
-            }
-        };
-
-        let first = match video.frame_at_index(0) {
-            Ok(frame) => frame,
-            Err(e) => {
-                self.error = Some(format!("Could not decode the first frame: {e}"));
-                return;
-            }
-        };
-
+    /// Make an opened video the source, replacing whatever was loaded. The
+    /// opening and first-frame decode happened on the loader thread
+    /// (`app_load`); this is the UI-thread half.
+    pub(crate) fn apply_loaded_video(
+        &mut self,
+        path: std::path::PathBuf,
+        video: VideoSource,
+        first: SourceImage,
+    ) {
         let info = video.info.clone();
         self.stop_playback();
         self.video = Some(VideoState::new(video));

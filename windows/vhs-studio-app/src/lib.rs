@@ -6,6 +6,7 @@
 
 pub mod about;
 pub mod app;
+pub mod app_load;
 pub mod app_preset;
 pub mod app_timeline;
 pub mod app_video;
