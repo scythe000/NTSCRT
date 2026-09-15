@@ -161,6 +161,7 @@ impl NtscrtApp {
         self.error = None;
         self.mark_dirty();
         self.schedule_prerender();
+        self.follow_video_frame(0);
     }
 
     /// Something upstream of the shader chain changed — the NTSC settings or
@@ -185,9 +186,11 @@ impl NtscrtApp {
         let json = self.ntsc.settings_json().ok();
         let enabled = self.ntsc_enabled;
         let rotation = self.rotation;
+        let per_frame = self.per_frame_ntsc_json();
         let Some(video) = self.video.as_ref() else { return };
         if let Some(pipeline) = &video.playback {
             pipeline.config.update(enabled, json, video.generation, rotation);
+            pipeline.config.set_per_frame_json(per_frame);
         }
     }
 
@@ -230,6 +233,7 @@ impl NtscrtApp {
         let json = self.ntsc.settings_json().ok();
         let enabled = self.ntsc_enabled;
         let rotation = self.rotation;
+        let per_frame = self.per_frame_ntsc_json();
         let Some(video) = self.video.as_mut() else { return };
 
         // Dropping the old pipeline stops it and joins its thread, so two
@@ -238,6 +242,7 @@ impl NtscrtApp {
 
         let config = Config::new(enabled, json, video.generation, rotation);
         config.set_cache_probe(Some(video.cache.probe()));
+        config.set_per_frame_json(per_frame);
         match PlaybackPipeline::start(
             video.source.clone(),
             frame,
@@ -269,23 +274,24 @@ impl NtscrtApp {
         self.schedule_prerender();
     }
 
-    /// Move the playhead, from the scrubber or a keyboard step.
+    /// Move the playhead, from the scrubber, a keyboard step or the timeline.
     pub fn seek_to_frame(&mut self, frame: usize) {
         let Some(video) = self.video.as_ref() else { return };
         let frame = frame.min(video.total_frames().saturating_sub(1));
-        if frame == video.current_frame_index {
-            return;
+        if frame != video.current_frame_index {
+            let playing = video.playing;
+            if let Some(video) = self.video.as_mut() {
+                video.current_frame_index = frame;
+            }
+            if playing {
+                // The producer is decoding somewhere else now; restart it here.
+                self.start_pipeline(frame);
+            } else {
+                self.show_frame(frame);
+            }
         }
-        let playing = video.playing;
-        if let Some(video) = self.video.as_mut() {
-            video.current_frame_index = frame;
-        }
-        if playing {
-            // The producer is decoding somewhere else now; restart it here.
-            self.start_pipeline(frame);
-        } else {
-            self.show_frame(frame);
-        }
+        // Whatever moved the frame, the timeline's playhead is that frame.
+        self.follow_video_frame(frame);
     }
 
     /// Decode and display a single frame — the paused/scrubbing path.
@@ -371,10 +377,16 @@ impl NtscrtApp {
         video.processed_source = output.processed;
 
         let (width, height) = output.size;
+        let frame_index = output.frame_index;
         self.source = SourceImage { width, height, pixels: output.clean };
         self.source_version += 1;
-        self.frame_count = output.frame_index;
+        self.frame_count = frame_index;
         self.mark_dirty();
+
+        // The playhead *is* the video position: keep the timeline and the
+        // sidebar in step with the frame on screen. The producer has already
+        // baked this frame from the animation, so this is display only.
+        self.follow_video_frame(frame_index);
     }
 
     /// Put the chain input the preview just rendered into the cache.
@@ -457,6 +469,7 @@ impl NtscrtApp {
         let ntsc_enabled = self.ntsc_enabled;
         let json = self.ntsc.settings_json().ok();
         let rotation = self.rotation;
+        let per_frame = self.per_frame_ntsc_json();
 
         let Some(video) = self.video.as_mut() else { return };
         if video.playing || !ntsc_enabled {
@@ -478,6 +491,7 @@ impl NtscrtApp {
             }
             let config = Config::new(true, json, video.generation, rotation);
             config.set_cache_probe(Some(video.cache.probe()));
+            config.set_per_frame_json(per_frame);
             match PlaybackPipeline::start(
                 video.source.clone(),
                 video.current_frame_index,

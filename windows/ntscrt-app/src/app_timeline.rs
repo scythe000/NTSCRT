@@ -90,26 +90,58 @@ impl NtscrtApp {
         TimelineEvaluator::new(tl, meta, ntscrt_core::timeline::ntsc_interp_table())
     }
 
+    /// The keyframed NTSC settings per clip frame, for the playback and
+    /// pre-render producers. None when nothing is keyed, so they use the
+    /// live settings as before.
+    pub(crate) fn per_frame_ntsc_json(&self) -> Option<crate::video::playback::PerFrameJson> {
+        let ev = self.timeline_evaluator()?;
+        let total = self.effective_frame_count();
+        Some(std::sync::Arc::new(move |frame: usize| {
+            let t = if total > 1 { frame as f64 / (total - 1) as f64 } else { 0.0 };
+            Some(ev.ntsc_json(t))
+        }))
+    }
+
+    /// A playing video has moved to `frame`: put the playhead there and show
+    /// the animation's state without treating it as an edit — the frame the
+    /// producer baked (and the cache holds) already has these settings in it,
+    /// so nothing upstream is stale.
+    pub(crate) fn follow_video_frame(&mut self, frame: usize) {
+        let total = self.effective_frame_count();
+        self.playhead = if total > 1 { frame as f64 / (total - 1) as f64 } else { 0.0 };
+        self.apply_timeline_state_at_playhead();
+    }
+
     /// Move the playhead and show what the animation looks like there.
     pub fn scrub_timeline(&mut self, t: f64) {
-        self.playhead = t.clamp(0.0, 1.0);
+        let t = t.clamp(0.0, 1.0);
 
-        // A video's playhead *is* its position, so scrubbing seeks it.
-        if self.video.is_some() {
-            let (_, fps) = self.effective_timeline();
-            let total = self.video.as_ref().map(|v| v.total_frames()).unwrap_or(1);
-            let frame = ((self.playhead * (total.saturating_sub(1)) as f64).round() as usize)
-                .min(total.saturating_sub(1));
-            let _ = fps;
+        // A video's playhead *is* its position, quantised to frames, so
+        // scrubbing seeks it; the seek puts the playhead on the frame and
+        // applies the animation there.
+        if let Some(video) = self.video.as_ref() {
+            let last = video.total_frames().saturating_sub(1);
+            let frame = ((t * last as f64).round() as usize).min(last);
             self.seek_to_frame(frame);
+            return;
         }
 
+        self.playhead = t;
         self.apply_timeline_at_playhead();
     }
 
     /// Push the evaluated state into the live settings, so the sidebar shows
     /// what the preview is showing.
+    ///
+    /// Moving the playhead is not an edit: with keyframes the producers bake
+    /// each frame from the animation (`per_frame_ntsc_json`), so cached
+    /// frames stay valid and nothing upstream needs invalidating — only the
+    /// preview needs redrawing.
     pub fn apply_timeline_at_playhead(&mut self) {
+        self.apply_timeline_state_at_playhead();
+    }
+
+    fn apply_timeline_state_at_playhead(&mut self) {
         let Some(ev) = self.timeline_evaluator() else { return };
         let t = self.playhead;
 
@@ -125,7 +157,7 @@ impl NtscrtApp {
                 self.set_shader_param(&name, value);
             }
         }
-        self.mark_chain_input_edited();
+        self.mark_dirty();
     }
 
     /// Snapshot every animatable parameter at the playhead.

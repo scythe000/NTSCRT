@@ -20,8 +20,12 @@
 //!   can run in place inside texture memory with no upload step. Here frames
 //!   arrive from a pipe as plain CPU buffers and the NTSC stage runs on them
 //!   directly, which is the same one-copy shape without needing the pool.
-//! - There is no per-frame settings hook. That exists on macOS to play a
-//!   keyframe timeline, which this build does not have (see `app_preset`).
+//! The per-frame settings hook (`Config::set_per_frame_json`) is how a
+//! keyframe timeline plays: the producer asks it for the NTSC settings of
+//! each frame index instead of using the base settings, so the baked frame —
+//! and therefore the cached one — is what the animation says that frame
+//! should be. Settings are a pure function of (keys, frame index), which is
+//! what keeps the frame cache valid while the playhead moves.
 //!
 //! The frame index handed to the signal stage is the clip's own frame number,
 //! the same number the export paths use, so a frame scrubbed to in the
@@ -53,6 +57,10 @@ pub struct Output {
     pub generation: u64,
 }
 
+/// NTSC settings for one frame index, evaluated from a keyframe timeline.
+/// None means "use the base settings".
+pub type PerFrameJson = Arc<dyn Fn(usize) -> Option<String> + Send + Sync>;
+
 /// NTSC settings snapshot, updated from the UI thread when the user edits
 /// values. Bumping the generation invalidates queued frames.
 pub struct Config {
@@ -68,6 +76,8 @@ struct ConfigInner {
     rotation: Rotation,
     /// Frame-cache probe: a frame already held is decoded but not processed.
     probe: Option<CacheProbe>,
+    /// Keyframed settings per frame; overrides `settings_json` when set.
+    per_frame: Option<PerFrameJson>,
 }
 
 impl Config {
@@ -84,8 +94,19 @@ impl Config {
                 generation,
                 rotation,
                 probe: None,
+                per_frame: None,
             }),
         })
+    }
+
+    pub fn set_per_frame_json(&self, per_frame: Option<PerFrameJson>) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.per_frame = per_frame;
+        }
+    }
+
+    fn per_frame_json(&self) -> Option<PerFrameJson> {
+        self.inner.lock().ok().and_then(|inner| inner.per_frame.clone())
     }
 
     pub fn update(
@@ -406,6 +427,11 @@ fn run(
             let hopeless = target_absolute.load(Ordering::Relaxed) > absolute;
             if !hopeless {
                 let (enabled, json, generation, rotation, probe) = config.snapshot();
+                // A keyframed clip has its own settings for every frame.
+                let json = config
+                    .per_frame_json()
+                    .and_then(|f| f(frame_index))
+                    .or(json);
                 let cached = probe.is_some_and(|p| p.is_cached(frame_index, generation));
                 // Rotate before anything else touches the frame: NTSC is a
                 // scanline effect, so rotating afterwards would carry the
