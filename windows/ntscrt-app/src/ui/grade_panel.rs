@@ -143,7 +143,9 @@ fn hue_row(ui: &mut egui::Ui, app: &NtscrtApp, changes: &mut Vec<(&'static str, 
 /// A saturated, mid-luma colour at a given I/Q angle (degrees).
 pub(crate) fn colour_for_hue(deg: f32) -> [f32; 3] {
     let (s, c) = deg.to_radians().sin_cos();
-    let (y, i, q) = (0.5f32, 0.35 * c, 0.35 * s);
+    // Radius chosen so no channel clips at any angle (else the angle would
+    // not read back): 0.24 * sqrt(1.106^2 + 1.703^2) < 0.5.
+    let (y, i, q) = (0.5f32, 0.24 * c, 0.24 * s);
     [
         (y + 0.956 * i + 0.621 * q).clamp(0.0, 1.0),
         (y - 0.272 * i - 0.647 * q).clamp(0.0, 1.0),
