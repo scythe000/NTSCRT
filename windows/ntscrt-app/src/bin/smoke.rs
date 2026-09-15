@@ -542,12 +542,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         )?;
 
         println!(
-            "wrote:   {} ({}x{}, {} frames at {:.2} fps, {:.1} MB) in {:.1}s",
+            "wrote:   {} ({}x{}, {} frames at {:.2} fps{}, {:.1} MB) in {:.1}s",
             job.dest.display(),
             summary.width,
             summary.height,
             summary.frames,
             summary.fps,
+            if summary.has_audio { ", with audio" } else { ", silent" },
             summary.bytes as f64 / (1024.0 * 1024.0),
             started.elapsed().as_secs_f32()
         );

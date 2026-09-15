@@ -778,11 +778,12 @@ impl NtscrtApp {
         match result {
             Ok(s) => {
                 self.status = Some(format!(
-                    "Exported {} ({}x{}, {} frames, {:.1} MB)",
+                    "Exported {} ({}x{}, {} frames{}, {:.1} MB)",
                     task.dest.display(),
                     s.width,
                     s.height,
                     s.frames,
+                    if s.has_audio { ", with audio" } else { "" },
                     s.bytes as f64 / (1024.0 * 1024.0)
                 ));
                 self.error = None;

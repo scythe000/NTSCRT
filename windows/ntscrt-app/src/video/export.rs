@@ -10,6 +10,12 @@
 //! the playback cache, never dropped under load — and the frame index seeds
 //! the signal stage's RNG, so the same settings and the same frame produce
 //! the same pixels on every run.
+//!
+//! A clip's audio comes along: the source file is handed to ffmpeg as a
+//! second input and its first audio track re-encoded to AAC, as the macOS
+//! exporter does (a compressed passthrough is fragile across sample rates
+//! and channel layouts; the re-encode is robust and cheap). Looped exports
+//! loop the audio with the picture. Stills and GIFs have no audio.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -263,7 +269,19 @@ pub fn export(
     let loops = if job.format.is_gif() { 1 } else { job.loop_count.max(1) };
     let total = frame_count * loops;
 
-    let args = encode_args(job, enc_w, enc_h, out_fps, out_w, out_h);
+    // Audio rides along only when there is a clip with a track to take it
+    // from and a container that can hold it.
+    let audio = match &video {
+        Some(v) if v.info.has_audio && !job.format.is_gif() => Some(AudioTrack {
+            path: source,
+            loops,
+            seconds: total as f64 / out_fps.max(f64::EPSILON),
+        }),
+        _ => None,
+    };
+    let has_audio = audio.is_some();
+
+    let args = encode_args(job, enc_w, enc_h, out_fps, audio);
     let mut proc = ffmpeg::Process::spawn(&ffmpeg::ffmpeg_path(), &args, false, true)?;
     let mut stdin = proc
         .child
@@ -338,8 +356,9 @@ pub fn export(
     drop(stdin);
 
     if cancelled {
-        // Closing the pipe makes ffmpeg finalise what it has; the partial
-        // file is worse than nothing, so it goes.
+        // The partial file is worse than nothing, so it goes — and there is
+        // no point letting ffmpeg finish the rest of the audio first.
+        let _ = proc.child.kill();
         let _ = proc.child.wait();
         let _ = std::fs::remove_file(&job.dest);
         return Err(ExportError::Cancelled.into());
@@ -357,7 +376,18 @@ pub fn export(
         height: enc_h,
         fps: out_fps,
         bytes,
+        has_audio,
     })
+}
+
+/// The source's audio, to be muxed into the export.
+struct AudioTrack<'a> {
+    path: &'a Path,
+    /// How many times the clip plays in the file; the audio loops with it.
+    loops: u32,
+    /// The picture's total length. The audio is cut to it so a track that
+    /// runs past the last frame cannot lengthen the file.
+    seconds: f64,
 }
 
 /// Cancellation is not a failure, but it has to travel as one so the whole
@@ -385,19 +415,21 @@ pub struct ExportSummary {
     pub height: u32,
     pub fps: f64,
     pub bytes: u64,
+    /// Whether the file carries the source's audio.
+    pub has_audio: bool,
 }
 
 /// ffmpeg arguments for one export.
 ///
 /// Input is always rawvideo RGBA at the encode size; what differs is the
-/// codec and, for GIF, the palette filter.
+/// codec and, for GIF, the palette filter. With `audio`, the source file is
+/// a second input whose first audio track is mapped alongside the picture.
 fn encode_args(
     job: &ExportJob,
     w: u32,
     h: u32,
     fps: f64,
-    _render_w: u32,
-    _render_h: u32,
+    audio: Option<AudioTrack<'_>>,
 ) -> Vec<String> {
     let mut a: Vec<String> = vec![
         "-hide_banner".into(),
@@ -415,6 +447,23 @@ fn encode_args(
         "-i".into(),
         "pipe:0".into(),
     ];
+
+    if let Some(audio) = &audio {
+        // `-stream_loop` applies to the input that follows it, and counts
+        // repeats, not plays.
+        if audio.loops > 1 {
+            a.push("-stream_loop".into());
+            a.push(format!("{}", audio.loops - 1));
+        }
+        a.push("-i".into());
+        a.push(audio.path.to_string_lossy().to_string());
+        // Explicit maps: left to itself ffmpeg would take the "best" video
+        // stream across both inputs, which is the source, not the render.
+        a.extend([
+            "-map".into(), "0:v:0".into(),
+            "-map".into(), "1:a:0".into(),
+        ]);
+    }
 
     match job.format {
         ExportFormat::Gif => {
@@ -453,6 +502,17 @@ fn encode_args(
                 "-preset".into(), "slow".into(),
             ]);
         }
+    }
+
+    if let Some(audio) = &audio {
+        // The macOS exporter's settings: AAC, 44.1 kHz, stereo, 128 kbps.
+        a.extend([
+            "-c:a".into(), "aac".into(),
+            "-b:a".into(), "128k".into(),
+            "-ar".into(), "44100".into(),
+            "-ac".into(), "2".into(),
+            "-t".into(), format!("{:.6}", audio.seconds),
+        ]);
     }
 
     a.push(job.dest.to_string_lossy().to_string());
@@ -539,7 +599,70 @@ mod tests {
 
     fn args_for(format: ExportFormat) -> Vec<String> {
         let job = ExportJob { format, dest: PathBuf::from("o"), ..Default::default() };
-        encode_args(&job, 640, 480, 24.0, 640, 480)
+        encode_args(&job, 640, 480, 24.0, None)
+    }
+
+    fn args_with_audio(format: ExportFormat, loops: u32) -> Vec<String> {
+        let job = ExportJob { format, loop_count: loops, dest: PathBuf::from("o"), ..Default::default() };
+        let audio = AudioTrack { path: Path::new("clip.mp4"), loops, seconds: 2.5 * loops as f64 };
+        encode_args(&job, 640, 480, 24.0, Some(audio))
+    }
+
+    fn after<'a>(a: &'a [String], flag: &str) -> Option<&'a str> {
+        a.iter().position(|x| x == flag).map(|i| a[i + 1].as_str())
+    }
+
+    #[test]
+    fn without_audio_there_is_a_single_input_and_no_maps() {
+        for f in ExportFormat::ALL {
+            let a = args_for(f);
+            assert_eq!(a.iter().filter(|x| *x == "-i").count(), 1, "{f:?}");
+            assert!(!a.contains(&"-map".to_string()), "{f:?}");
+            assert!(!a.contains(&"-c:a".to_string()), "{f:?}");
+        }
+    }
+
+    #[test]
+    fn audio_adds_the_source_as_a_second_input_and_maps_both_explicitly() {
+        let a = args_with_audio(ExportFormat::H264, 1);
+        let inputs: Vec<&str> = a
+            .iter()
+            .enumerate()
+            .filter(|(_, x)| *x == "-i")
+            .map(|(i, _)| a[i + 1].as_str())
+            .collect();
+        assert_eq!(inputs, ["pipe:0", "clip.mp4"]);
+        let maps: Vec<&str> = a
+            .iter()
+            .enumerate()
+            .filter(|(_, x)| *x == "-map")
+            .map(|(i, _)| a[i + 1].as_str())
+            .collect();
+        // Picture from the pipe, sound from the file — never the file's video.
+        assert_eq!(maps, ["0:v:0", "1:a:0"]);
+        // Re-encoded to the macOS exporter's AAC settings.
+        assert_eq!(after(&a, "-c:a"), Some("aac"));
+        assert_eq!(after(&a, "-b:a"), Some("128k"));
+        assert_eq!(after(&a, "-ar"), Some("44100"));
+        assert_eq!(after(&a, "-ac"), Some("2"));
+        // And cut to the picture's length.
+        assert_eq!(after(&a, "-t"), Some("2.500000"));
+        // A single play does not loop the input.
+        assert!(!a.contains(&"-stream_loop".to_string()));
+        assert_eq!(a.last().unwrap(), "o");
+    }
+
+    #[test]
+    fn looped_audio_repeats_the_source_input_with_the_picture() {
+        let a = args_with_audio(ExportFormat::ProRes422, 3);
+        // `-stream_loop` counts repeats and must precede the input it loops.
+        let sl = a.iter().position(|x| x == "-stream_loop").expect("stream_loop");
+        assert_eq!(a[sl + 1], "2");
+        assert_eq!(a[sl + 2], "-i");
+        assert_eq!(a[sl + 3], "clip.mp4");
+        assert_eq!(after(&a, "-t"), Some("7.500000"));
+        // The video encoder is untouched by the audio options.
+        assert!(a.contains(&"prores_ks".to_string()));
     }
 
     #[test]
