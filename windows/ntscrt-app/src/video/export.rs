@@ -12,10 +12,12 @@
 //! the same pixels on every run.
 //!
 //! A clip's audio comes along: the source file is handed to ffmpeg as a
-//! second input and its first audio track re-encoded to AAC, as the macOS
-//! exporter does (a compressed passthrough is fragile across sample rates
-//! and channel layouts; the re-encode is robust and cheap). Looped exports
-//! loop the audio with the picture. Stills and GIFs have no audio.
+//! second input and its first audio track mapped alongside the picture. The
+//! track is **copied** when the output container can hold its codec, so the
+//! sound is untouched and the audio side of the export is free; when it
+//! can't (PCM or Vorbis into MP4, say), it is re-encoded to AAC as the macOS
+//! exporter always does. Looped exports loop the audio with the picture.
+//! Stills and GIFs have no audio.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -71,6 +73,32 @@ impl ExportFormat {
             ExportFormat::Gif => "gif",
             _ if self.is_prores() => "mov",
             _ => "mp4",
+        }
+    }
+
+    /// Whether a source audio track in `codec` (ffprobe's name) can be
+    /// stream-copied into this format's container.
+    ///
+    /// These are the codecs the container specification allows *and* that
+    /// common players open. MP4 takes the MPEG family plus Dolby; QuickTime
+    /// takes those and raw PCM, which MP4 does not (ffmpeg's `ipcm` boxes are
+    /// legal but few players read them). Anything else — Vorbis, FLAC, an
+    /// unnamed codec — is re-encoded, which is never wrong, only lossy.
+    pub fn can_copy_audio(self, codec: Option<&str>) -> bool {
+        let Some(codec) = codec else { return false };
+        const MPEG_AND_DOLBY: &[&str] = &["aac", "mp3", "mp2", "ac3", "eac3", "alac"];
+        // The PCM layouts QuickTime has tags for; camera and NLE output is
+        // one of these when it is PCM at all.
+        const QUICKTIME_PCM: &[&str] = &[
+            "pcm_s16le", "pcm_s16be", "pcm_s24le", "pcm_s24be", "pcm_s32le", "pcm_s32be",
+            "pcm_f32le", "pcm_f32be", "pcm_f64le", "pcm_f64be", "pcm_u8", "pcm_alaw", "pcm_mulaw",
+        ];
+        match self {
+            ExportFormat::Gif => false,
+            ExportFormat::H264 | ExportFormat::Hevc => MPEG_AND_DOLBY.contains(&codec),
+            ExportFormat::ProRes422 | ExportFormat::ProRes422HQ => {
+                MPEG_AND_DOLBY.contains(&codec) || QUICKTIME_PCM.contains(&codec)
+            }
         }
     }
 
@@ -276,10 +304,15 @@ pub fn export(
             path: source,
             loops,
             seconds: total as f64 / out_fps.max(f64::EPSILON),
+            copy: job.format.can_copy_audio(v.info.audio_codec.as_deref()),
         }),
         _ => None,
     };
-    let has_audio = audio.is_some();
+    let audio_mode = match &audio {
+        None => AudioMode::None,
+        Some(a) if a.copy => AudioMode::Copied,
+        Some(_) => AudioMode::Reencoded,
+    };
 
     let args = encode_args(job, enc_w, enc_h, out_fps, audio);
     let mut proc = ffmpeg::Process::spawn(&ffmpeg::ffmpeg_path(), &args, false, true)?;
@@ -376,7 +409,7 @@ pub fn export(
         height: enc_h,
         fps: out_fps,
         bytes,
-        has_audio,
+        audio: audio_mode,
     })
 }
 
@@ -388,6 +421,20 @@ struct AudioTrack<'a> {
     /// The picture's total length. The audio is cut to it so a track that
     /// runs past the last frame cannot lengthen the file.
     seconds: f64,
+    /// Stream-copy the track rather than re-encode it.
+    copy: bool,
+}
+
+/// What happened to the source's audio.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioMode {
+    /// The file has no audio: a still, a GIF, or a silent clip.
+    None,
+    /// The source track was copied untouched.
+    Copied,
+    /// The source track was re-encoded to AAC because the container could
+    /// not hold its codec.
+    Reencoded,
 }
 
 /// Cancellation is not a failure, but it has to travel as one so the whole
@@ -415,8 +462,7 @@ pub struct ExportSummary {
     pub height: u32,
     pub fps: f64,
     pub bytes: u64,
-    /// Whether the file carries the source's audio.
-    pub has_audio: bool,
+    pub audio: AudioMode,
 }
 
 /// ffmpeg arguments for one export.
@@ -505,14 +551,18 @@ fn encode_args(
     }
 
     if let Some(audio) = &audio {
-        // The macOS exporter's settings: AAC, 44.1 kHz, stereo, 128 kbps.
-        a.extend([
-            "-c:a".into(), "aac".into(),
-            "-b:a".into(), "128k".into(),
-            "-ar".into(), "44100".into(),
-            "-ac".into(), "2".into(),
-            "-t".into(), format!("{:.6}", audio.seconds),
-        ]);
+        if audio.copy {
+            a.extend(["-c:a".into(), "copy".into()]);
+        } else {
+            // The macOS exporter's settings: AAC, 44.1 kHz, stereo, 128 kbps.
+            a.extend([
+                "-c:a".into(), "aac".into(),
+                "-b:a".into(), "128k".into(),
+                "-ar".into(), "44100".into(),
+                "-ac".into(), "2".into(),
+            ]);
+        }
+        a.extend(["-t".into(), format!("{:.6}", audio.seconds)]);
     }
 
     a.push(job.dest.to_string_lossy().to_string());
@@ -603,8 +653,12 @@ mod tests {
     }
 
     fn args_with_audio(format: ExportFormat, loops: u32) -> Vec<String> {
+        args_with_audio_mode(format, loops, false)
+    }
+
+    fn args_with_audio_mode(format: ExportFormat, loops: u32, copy: bool) -> Vec<String> {
         let job = ExportJob { format, loop_count: loops, dest: PathBuf::from("o"), ..Default::default() };
-        let audio = AudioTrack { path: Path::new("clip.mp4"), loops, seconds: 2.5 * loops as f64 };
+        let audio = AudioTrack { path: Path::new("clip.mp4"), loops, seconds: 2.5 * loops as f64, copy };
         encode_args(&job, 640, 480, 24.0, Some(audio))
     }
 
@@ -663,6 +717,42 @@ mod tests {
         assert_eq!(after(&a, "-t"), Some("7.500000"));
         // The video encoder is untouched by the audio options.
         assert!(a.contains(&"prores_ks".to_string()));
+    }
+
+    #[test]
+    fn a_copied_track_carries_no_encoder_settings_but_is_still_cut_to_length() {
+        let a = args_with_audio_mode(ExportFormat::H264, 2, true);
+        assert_eq!(after(&a, "-c:a"), Some("copy"));
+        for flag in ["-b:a", "-ar", "-ac"] {
+            assert!(!a.contains(&flag.to_string()), "{flag} must not accompany a copy");
+        }
+        assert_eq!(after(&a, "-t"), Some("5.000000"));
+        assert_eq!(after(&a, "-stream_loop"), Some("1"));
+    }
+
+    #[test]
+    fn audio_is_copied_only_when_the_container_can_hold_it() {
+        use ExportFormat::*;
+        // The MPEG family goes into both containers untouched.
+        for codec in ["aac", "mp3", "ac3", "eac3", "alac"] {
+            assert!(H264.can_copy_audio(Some(codec)), "{codec} into mp4");
+            assert!(Hevc.can_copy_audio(Some(codec)), "{codec} into mp4");
+            assert!(ProRes422.can_copy_audio(Some(codec)), "{codec} into mov");
+        }
+        // PCM is a QuickTime thing: fine in .mov, re-encoded for .mp4.
+        assert!(ProRes422HQ.can_copy_audio(Some("pcm_s16le")));
+        assert!(ProRes422.can_copy_audio(Some("pcm_s24le")));
+        assert!(!H264.can_copy_audio(Some("pcm_s16le")));
+        // Vorbis, FLAC and Opus are re-encoded rather than risk a file that
+        // some players refuse.
+        for codec in ["vorbis", "flac", "opus"] {
+            assert!(!H264.can_copy_audio(Some(codec)), "{codec}");
+            assert!(!ProRes422.can_copy_audio(Some(codec)), "{codec}");
+        }
+        // No codec name means no basis for copying.
+        assert!(!H264.can_copy_audio(None));
+        // GIF has no audio at all.
+        assert!(!Gif.can_copy_audio(Some("aac")));
     }
 
     #[test]

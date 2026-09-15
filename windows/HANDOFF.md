@@ -62,11 +62,11 @@ counterpart in its header comment. Port *behaviour*, not frameworks.
 | Timeline bar UI | ✅ looked at and driven on a Linux desktop (see below) |
 | Keyframes animating during video playback / scrub | ✅ verified on screen |
 | Export progress + cancel | ✅ in the toolbar; cancel leaves no partial file |
-| Audio on video export | ✅ AAC muxed, looped, cut to length; ffprobe-checked |
+| Audio on video export | ✅ copied when the container allows, else AAC; looped, cut to length; ffprobe-checked |
 | Preview zoom / pan / integer scale | ✅ pure `frame()` unit-tested + on screen |
 | Icon, DPI manifest, zip, release workflow | ✅ workflow green on `windows-latest`: 130 tests, icon embedded without warnings, 65.8 MB zip artifact |
 
-**130 tests, zero warnings.** 52 in `ntscrt-core`, 78 in `ntscrt-app`.
+**133 tests, zero warnings.** 52 in `ntscrt-core`, 81 in `ntscrt-app`.
 
 ### How the GUI was verified — and what that does and doesn't cover
 
@@ -346,15 +346,22 @@ state can't drift while the image is not overflowing. Alt+scroll zooms about
 the cursor by shifting pan by `(centre − cursor) · (new/old − 1)`. Unit-tested
 like `PreviewGeometry.swift`; the interaction code just feeds it.
 
-### Audio is re-encoded, cut with `-t`, never `-shortest`
+### Audio is copied when the container allows, cut with `-t`, never `-shortest`
 
-Same choice as `Mp4Exporter.swift`: AAC 44.1 kHz stereo 128 kbps rather than
-a passthrough that breaks on odd sample rates and layouts. The source file is
-ffmpeg's second input, `-stream_loop (loops−1)` repeats it with the picture,
-and **`-map 0:v:0 -map 1:a:0` is mandatory** — without it ffmpeg picks the
+`Mp4Exporter.swift` always re-encodes to AAC because AVFoundation's
+passthrough is fragile. ffmpeg's isn't — `-c:a copy` is a remux — so the
+track is copied untouched whenever the output container can hold its codec
+(`ExportFormat::can_copy_audio`: the MPEG/Dolby family into MP4 and MOV, PCM
+into MOV only) and re-encoded to the macOS settings (AAC 44.1 kHz stereo
+128 kbps) otherwise — PCM or Vorbis into MP4, an unnamed codec. The status
+line says which happened. The source file is ffmpeg's second input,
+`-stream_loop (loops−1)` repeats it with the picture, and
+**`-map 0:v:0 -map 1:a:0` is mandatory** — without it ffmpeg picks the
 "best" video stream across inputs, which is the source, not the render.
 `-t <picture length>` trims a long audio track; `-shortest` was rejected
 because a track a few ms *shorter* than the picture would truncate video.
+A copied track is cut at packet granularity, so it can run one audio frame
+(~23 ms for AAC) past the last picture frame; a re-encoded one is exact.
 On cancel ffmpeg is killed rather than allowed to finish the audio.
 
 ### The whole shader tree ships

@@ -239,7 +239,14 @@ fn print_video_info(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     println!("size:    {}x{}", i.width, i.height);
     println!("rate:    {:.4} fps", i.frame_rate);
     println!("length:  {:.3}s, {} frames", i.duration_seconds, i.total_frames);
-    println!("audio:   {}", if i.has_audio { "yes" } else { "none" });
+    println!(
+        "audio:   {}",
+        match (&i.has_audio, &i.audio_codec) {
+            (false, _) => "none".to_string(),
+            (true, Some(c)) => c.clone(),
+            (true, None) => "yes (codec unknown)".to_string(),
+        }
+    );
     Ok(())
 }
 
@@ -548,7 +555,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             summary.height,
             summary.frames,
             summary.fps,
-            if summary.has_audio { ", with audio" } else { ", silent" },
+            match summary.audio {
+                ntscrt_app::video::AudioMode::None => ", silent",
+                ntscrt_app::video::AudioMode::Copied => ", audio copied",
+                ntscrt_app::video::AudioMode::Reencoded => ", audio re-encoded to AAC",
+            },
             summary.bytes as f64 / (1024.0 * 1024.0),
             started.elapsed().as_secs_f32()
         );

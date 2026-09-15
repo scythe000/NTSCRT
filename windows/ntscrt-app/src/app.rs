@@ -783,7 +783,11 @@ impl NtscrtApp {
                     s.width,
                     s.height,
                     s.frames,
-                    if s.has_audio { ", with audio" } else { "" },
+                    match s.audio {
+                        crate::video::AudioMode::None => "",
+                        crate::video::AudioMode::Copied => ", audio copied",
+                        crate::video::AudioMode::Reencoded => ", audio re-encoded to AAC",
+                    },
                     s.bytes as f64 / (1024.0 * 1024.0)
                 ));
                 self.error = None;

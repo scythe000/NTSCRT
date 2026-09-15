@@ -49,6 +49,11 @@ pub struct VideoInfo {
     /// `duration * frame_rate`, as the macOS build computes it.
     pub total_frames: usize,
     pub has_audio: bool,
+    /// The first audio track's codec as ffprobe names it (`aac`, `pcm_s16le`,
+    /// `opus`, ...), when there is one. The exporter uses it to decide whether
+    /// the track can be copied into the output container or must be
+    /// re-encoded.
+    pub audio_codec: Option<String>,
     pub video_codec: String,
 }
 
@@ -111,7 +116,12 @@ fn parse_probe(json: &str) -> Result<VideoInfo, String> {
         .iter()
         .find(|s| is_type(s, "video"))
         .ok_or("no video track in this file")?;
-    let has_audio = streams.iter().any(|s| is_type(s, "audio"));
+    let audio = streams.iter().find(|s| is_type(s, "audio"));
+    let has_audio = audio.is_some();
+    let audio_codec = audio
+        .and_then(|a| a.get("codec_name"))
+        .and_then(|c| c.as_str())
+        .map(str::to_string);
 
     // ffprobe quotes some numbers and not others depending on the field.
     let num = |v: &serde_json::Value, key: &str| -> Option<f64> {
@@ -159,6 +169,7 @@ fn parse_probe(json: &str) -> Result<VideoInfo, String> {
         duration_seconds,
         total_frames,
         has_audio,
+        audio_codec,
         video_codec: video
             .get("codec_name")
             .and_then(|c| c.as_str())
@@ -409,7 +420,19 @@ mod tests {
               "height": 480, "r_frame_rate": "25/1", "duration": "1.0" } ] }"#;
         let info = parse_probe(json).unwrap();
         assert!(info.has_audio);
+        assert_eq!(info.audio_codec.as_deref(), Some("aac"));
         assert_eq!(info.total_frames, 25);
+    }
+
+    #[test]
+    fn an_audio_track_without_a_codec_name_still_counts() {
+        let json = r#"{ "streams": [
+            { "codec_type": "audio" },
+            { "codec_type": "video", "codec_name": "h264", "width": 640,
+              "height": 480, "r_frame_rate": "25/1", "duration": "1.0" } ] }"#;
+        let info = parse_probe(json).unwrap();
+        assert!(info.has_audio);
+        assert_eq!(info.audio_codec, None);
     }
 
     #[test]

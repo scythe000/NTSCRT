@@ -140,8 +140,10 @@ what you see rather than one frame of it.
   GIF; a still exports a PNG, or video if you tick **Export as video (VHS
   motion)** — the signal stage animates on its own, so a still can make a
   clip without a timeline. GIF gets its own width and rate and estimates the
-  file size before writing it. A clip's audio comes along, re-encoded to AAC
-  (44.1 kHz stereo, 128 kbps — the macOS exporter's settings) and looped with
+  file size before writing it. A clip's audio comes along untouched — the
+  track is copied when the output container can hold it (AAC, MP3, AC-3 and
+  the like into MP4 or MOV; PCM into MOV), and re-encoded to AAC 44.1 kHz
+  stereo only when it can't (PCM or Vorbis into MP4) — and is looped with
   the picture when **Loop** is more than 1; GIFs and stills are silent. Movie
   exports run on their own thread with progress in the toolbar and the
   export panel, and can be cancelled — a cancelled export removes its
@@ -246,13 +248,14 @@ On an RTX 3090 (Vulkan backend):
 - All five export formats produce valid files (checked with `ffprobe`), GIF
   honouring its own width and rate. Loop 3 turns 48 frames into 144. A still
   exported as video genuinely animates.
-- Audio: a clip with a track exports with AAC 44.1 kHz stereo of exactly the
-  picture's length, 6 s for a 2 s clip looped 3 times, in MP4 and MOV alike;
-  a silent clip, a still and a GIF export with no audio stream.
+- Audio: an AAC track is copied into MP4 (2 s clip → 2 s AAC; looped ×3 →
+  6 s), PCM is copied into MOV and re-encoded to AAC for MP4, Vorbis is
+  re-encoded for MP4; a silent clip, a still and a GIF export with no audio
+  stream.
 - Keyframes: 'Very wavy' sweeps `vhs_edge_wave` 0.5 -> 7.29 -> 0.5 across its
   48 frames (it was frozen at 1.64), and all 8 animated presets evaluate over
   real ranges. The animation bakes into exports frame by frame.
-- 130 tests pass (`cargo test --release`), no warnings.
+- 133 tests pass (`cargo test --release`), no warnings.
 
 On a Linux desktop (X11, Mesa's software Vulkan driver — a verification
 target, not a shipping one), driving the window with `xdotool` and reading
