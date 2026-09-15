@@ -1,9 +1,11 @@
 //! Image loading and saving, replacing the macOS build's
 //! `Sources/CrtCore/ImageIO.swift` (CoreGraphics/ImageIO).
 //!
-//! The `image` crate covers PNG/JPEG/BMP/TIFF/WebP. HEIC, which the Mac build
-//! accepts through ImageIO, has no pure-Rust decoder and is not supported —
-//! see the Limitations section of the Windows README.
+//! The `image` crate covers PNG/JPEG/BMP/TIFF/WebP. HEIC (which the Mac
+//! build reads through ImageIO) and AVIF have no pure-Rust decoder, so
+//! those go through ffmpeg — the same dependency video already needs —
+//! decoded as a one-frame clip. ffmpeg has demuxed HEIF since 7.1; an older
+//! ffmpeg fails with a clear message rather than a crash.
 
 use std::path::Path;
 
@@ -17,14 +19,43 @@ pub struct SourceImage {
 
 impl SourceImage {
     pub fn load(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
-        let img = image::open(path)?.to_rgba8();
-        let (width, height) = img.dimensions();
-        Ok(Self { width, height, pixels: img.into_raw() })
+        let image_err = match image::open(path) {
+            Ok(img) => {
+                let img = img.to_rgba8();
+                let (width, height) = img.dimensions();
+                return Ok(Self { width, height, pixels: img.into_raw() });
+            }
+            Err(e) => e,
+        };
+        // A format `image` doesn't do — by extension, or because the file's
+        // own signature said so — is ffmpeg's job. Anything else (a broken
+        // PNG, say) reports image's error as before.
+        let unsupported = matches!(image_err, image::ImageError::Unsupported(_));
+        if !(unsupported || needs_ffmpeg(path)) {
+            return Err(image_err.into());
+        }
+        Self::load_via_ffmpeg(path).map_err(|e| {
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            format!("{name}: {e}").into()
+        })
     }
 
-    /// Extensions the file picker offers, matching what `image` can decode.
+    /// Decode a still as a one-frame video through ffmpeg.
+    fn load_via_ffmpeg(path: &Path) -> Result<Self, String> {
+        let source = crate::video::VideoSource::open(path).map_err(|e| {
+            if needs_ffmpeg(path) {
+                format!("{e} (HEIC and AVIF stills need ffmpeg 7.1 or newer on your PATH)")
+            } else {
+                e
+            }
+        })?;
+        source.frame_at_index(0)
+    }
+
+    /// Extensions the file picker offers: what `image` decodes, plus the
+    /// stills ffmpeg is asked to decode.
     pub const EXTENSIONS: &'static [&'static str] =
-        &["png", "jpg", "jpeg", "bmp", "tif", "tiff", "webp"];
+        &["png", "jpg", "jpeg", "bmp", "tif", "tiff", "webp", "heic", "heif", "hif", "avif"];
 
     pub fn size(&self) -> (u32, u32) {
         (self.width, self.height)
@@ -38,6 +69,15 @@ impl SourceImage {
         }
         Self { width, height, pixels }
     }
+}
+
+/// Still formats `image` has no decoder for, which go through ffmpeg.
+pub const FFMPEG_EXTENSIONS: &[&str] = &["heic", "heif", "hif", "avif"];
+
+fn needs_ffmpeg(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| FFMPEG_EXTENSIONS.iter().any(|v| e.eq_ignore_ascii_case(v)))
 }
 
 /// Write tightly packed RGBA8 pixels to a PNG.
@@ -79,6 +119,31 @@ pub fn padded_bytes_per_row(width: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn heic_and_avif_are_routed_to_ffmpeg_and_png_is_not() {
+        assert!(needs_ffmpeg(Path::new("photo.HEIC")));
+        assert!(needs_ffmpeg(Path::new("/x/y.avif")));
+        assert!(!needs_ffmpeg(Path::new("frame.png")));
+        assert!(!needs_ffmpeg(Path::new("noext")));
+        for e in FFMPEG_EXTENSIONS {
+            assert!(SourceImage::EXTENSIONS.contains(e), "{e} missing from the picker");
+        }
+    }
+
+    #[test]
+    fn a_broken_png_reports_the_image_error_not_ffmpeg() {
+        let dir = std::env::temp_dir().join(format!("ntscrt-broken-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("broken.png");
+        std::fs::write(&path, b"not a png at all").unwrap();
+        let err = match SourceImage::load(&path) {
+            Ok(_) => panic!("garbage decoded as an image"),
+            Err(e) => e.to_string(),
+        };
+        assert!(!err.contains("ffmpeg"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn solid_image_has_the_expected_shape() {
