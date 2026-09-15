@@ -1,68 +1,69 @@
-# NTSCRT
+# VHS-Studio
 
-![NTSCRT — the full NTSC + CRT pipeline on the left of the compare split, untouched source on the right, with a keyframed animation on the timeline below](docs/header.webp)
+![VHS-Studio — the full VHS + CRT pipeline on the left of the compare split, untouched source on the right](docs/vhs-studio-header.webp)
 
-**Make any image or video look like it's playing on a 1980s TV.** NTSCRT runs your media through a real analog signal emulation ([ntsc-rs](https://github.com/ntsc-rs/ntsc-rs) — composite artifacts, tape noise, head switching) and then through RetroArch's CRT shaders (via [librashader](https://github.com/SnowflakePowered/librashader) — scanlines, phosphor masks, glow), frame-identical to RetroArch itself.
-
-Full disclosure: **this is two much better projects hacked together.** All of the actual image magic belongs to ntsc-rs and the RetroArch shader community; NTSCRT is the native Mac interface that connects them into one pipeline:
+**Make any image or video look like it's playing off a worn tape on a 1980s TV.** VHS-Studio runs your media through a real analog signal emulation ([ntsc-rs](https://github.com/ntsc-rs/ntsc-rs) — composite artifacts, tape noise, head switching, tracking errors), an optional colour grade, and then through RetroArch's CRT shaders (via [librashader](https://github.com/SnowflakePowered/librashader) — scanlines, phosphor masks, glow), on the GPU, for Windows.
 
 ```
-your image/video → NTSC/VHS signal degradation (full res) → downscale to retro resolution → CRT shader → screen
+your image/video → NTSC/VHS signal degradation (full res) → downscale to retro resolution → colour grade → CRT shader → screen / file
 ```
+
+Full disclosure: **this is two much better projects hacked together, plus a lot of glue.** All of the actual image magic belongs to ntsc-rs and the RetroArch shader community. VHS-Studio is the desktop app that connects them into one pipeline, with video playback, keyframe animation, exports and presets around it.
 
 ## Download
 
-Grab the DMG from [**Releases**](../../releases/latest), open it, and drag **NTSCRT** to Applications.
+Grab `VHS-Studio-<version>-windows-x64.zip` from [**Releases**](../../releases/latest), unzip it anywhere, and run `vhs-studio.exe`. Nothing to install: no runtime, no ffmpeg to find — a pinned FFmpeg is in the zip.
 
-**Requirements:** macOS 14 or later. The app is a universal binary (Apple Silicon + Intel).
+**Requirements:** Windows 10 or 11, 64-bit, with a GPU that supports Direct3D 12 or Vulkan (anything from the last decade). Windows SmartScreen will warn about an unsigned download; choose *More info → Run anyway*.
 
-> **Intel note:** I build and test NTSCRT on Apple Silicon and haven't personally tested the Intel build. Intel support exists thanks to a contributed fix ([#1](../../pull/1)) verified by its author on an Intel iMac Pro — if something misbehaves on your Intel Mac, please open an issue.
+The **[full guide](windows/README.md)** covers every panel and control. In short:
 
-> **Windows:** [**VHS-Studio**](windows/README.md), in [`windows/`](windows/), is the Windows app that grew out of NTSCRT — the same ntsc-rs + CRT shader pipeline rebuilt on wgpu and egui (SwiftUI and Metal don't exist there), with video, keyframes, exports, a colour-grade stage and bundled ffmpeg. Presets move between the two apps. Download the zip from Releases or build it with `cargo build --release`.
+- **Open** (Ctrl+O) an image (PNG, JPEG, WebP, HEIC, AVIF…) or a video (MP4, MOV, MKV…), or drop one on the window.
+- **Presets** — 25 bundled looks from *Clean CRT* to *Obliterated*, including eight colour looks (*Black & white*, *Solarized*, *Inverted*, *Blade Runner*, *Max Headroom*, *Neon*, two colour highlights) and eight that animate. Save your own as JSON.
+- **Sidebar** — the pipeline in signal order: Source, Downscale, NTSC (TV) with ntsc-rs's sixty-odd settings, Colour, and CRT with seven RetroArch presets and every runtime parameter.
+- **Timeline** — keyframe the entire chain (After Effects-style master keyframes, easing per key) and render the animation; on a video the keyframes pin to moments in the clip.
+- **Export** (Ctrl+E) — PNG for stills; H.264/HEVC MP4, ProRes MOV (audio comes along) or GIF for video, at your size and quality, with progress and Cancel. Exports are deterministic.
+- **Compare** splits the preview against the untouched source; **Animate** keeps the tape noise moving in the preview at NTSC's 30 fps.
 
-## Using the app
+## Where it comes from
 
-**Toolbar** — file actions live in the window toolbar: **Open** (⌘O) an image (PNG/JPEG/HEIC) or video (MP4/MOV), save/load a **Preset** (your entire configuration as a JSON file — downscale, VHS, shader, view, and the whole timeline: duration, frame rate and every keyframe), or pick one of the bundled presets listed underneath — loading one that carries keyframes opens the timeline so you can see the animation it brought with it, and **Export** (⌘E): stills to PNG; videos to H.264/HEVC .mp4, ProRes .mov (with audio), or animated **GIF**, at your choice of resolution and quality. Scanline detail is brutal on lossy codecs — use the High/Very high quality tiers, or ProRes when it's headed into an edit. Exports are deterministic: same settings + same frame = same pixels.
+VHS-Studio began as the Windows build of [**NTSCRT**](https://github.com/finnmckenty/NTSCRT), Finn McKenty's macOS app that first wired ntsc-rs and librashader together. It owes NTSCRT the pipeline, the house VHS look, the preset format, the keyframe model, the bundled presets and most of its design — and the two still share preset files. SwiftUI and Metal don't exist on Windows, so the app was rebuilt on [wgpu](https://wgpu.rs) and [egui](https://github.com/emilk/egui) in Rust; it then grew things the Mac app doesn't have (the colour-grade stage, bundled ffmpeg, an About box, and so on) and became its own program with its own name.
 
-**Scanline banding.** CRT shaders draw scanlines in *output* pixels, so if the export height isn't a whole multiple of the downscale height, one source line covers a fractional number of rows and the scanlines group into visible bands. Exports handle this automatically — they render at a whole multiple and average down — so you can ask for any size. **Snap size to scanline grid** takes the other route: it rounds the output to the nearest size where every source line gets the same whole number of rows, which keeps scanlines at their crispest but changes your dimensions. As a rule of thumb, crisp scanlines want 3+ output rows per downscale line, so a 320px-wide downscale wants ~960px+ of output.
+The macOS NTSCRT app is still in this repository (`Sources/`, `Package.swift`), unchanged; its README is at [docs/README-macOS.md](docs/README-macOS.md), and the upstream project is [finnmckenty/NTSCRT](https://github.com/finnmckenty/NTSCRT).
 
-**Loop** repeats the content in the exported file — set it to 3 and a 6-second clip becomes an 18-second file that plays through three times. It's for places that don't loop video on playback (Instagram, say), so you don't have to open an editor just to duplicate a clip. Audio repeats with the picture. GIFs already loop forever on their own, so the field doesn't apply to them.
+## Repository layout
 
-**GIF** gets its own width and frame rate (6/12/24/30 fps), because it doesn't behave like the video codecs: 256 colours and run-length compression versus full-frame analog noise means files run large — roughly 0.65–0.95 bytes per pixel per frame. A 5-second 480px GIF at 12 fps lands near 8 MB; at 1080px it would be 30 MB+, past what most platforms accept. The panel estimates the size before you export and warns past ~10 MB. GIF stores frame delays in hundredths of a second, so the rates land on that grid (12 fps plays at 12.5, 24 at 25, 30 at 33.3), and 60 fps isn't offered — GIF can't reliably go past 50.
-
-**Preview** — the floating palette holds the display controls. **Compare** (split-square) divides the preview: full pipeline on the left of the line, untouched original on the right — drag the line to move the split. **Integer scale** (grid) locks the image to whole-pixel multiples for perfectly uniform scanlines. Either way the CRT pass itself always renders at a whole multiple of the downscale (at least 6 rows per line — the same supersampling exports use) and is then fitted to the window, so what you see never depends on how big the window is, and zooming in inspects the real rendered pixels. **Animate** (sparkles — the preview's own, distinct from the toolbar's timeline button) runs the preview continuously so tape noise, jitter, and interlacing actually move — leave it on for the real experience. Zoom with the slider (or ⌥-scroll), hold Space to pan when zoomed. The palette fades out when the mouse goes idle; move the mouse to bring it back. Videos get a transport bar docked under the preview — play/pause plus a full-width, frame-accurate scrubber, with all effects applied during playback.
-
-**Animate (timeline)** — toggle **Animate** in the toolbar to keyframe-animate the entire effect chain and render it as video: scrub the playhead, dial in a look, press **Keyframe** to set one, move the playhead, dial in another look, keyframe again. Everything keys together as one master keyframe — parameters you don't change between keys hold still automatically. Click a keyframe to jump to it, and any parameter you change from there updates that keyframe in place, the way After Effects and Premiere behave. Drag a diamond to retime it, pick its interpolation from the dropdown underneath (linear, ease in, ease out, ease in-out, hold), and set the video length and frame rate in the timeline itself — export uses those. Keyframe times are proportional, so changing the duration stretches the whole animation. Image sources can export video even without keyframes — tape noise, jitter, and interlacing animate on their own ("VHS motion").
-
-On a **video**, the timeline replaces the transport bar and takes its length and frame rate from the clip: the playhead *is* the video position, so scrubbing it seeks the footage and keyframes pin parameter changes to moments in the clip. Export applies the animation frame by frame.
-
-**Sidebar** — the creative pipeline, top to bottom in signal order:
-
-- **Source** — the loaded file (drag & drop onto the panel works too).
-- **Downscale** — the retro horizontal resolution the CRT shader sees (SNES 256px, VGA 320px, or any custom width — height always follows your source's aspect ratio) and the resampling method. Nearest keeps pixels crunchy (best for pixel art), Nearest+ keeps the punch without shimmering on video, Area is the smooth neutral choice.
-- **NTSC (TV)** — the analog signal stage: composite noise, chroma bleed, head switching, tracking noise, tape speed, edge wave, and about sixty more. These are ntsc-rs's own settings — preset JSON copy/pastes both ways with the [ntsc-rs desktop app](https://github.com/ntsc-rs/ntsc-rs/releases).
-- **CRT** — seven RetroArch CRT presets (crt-royale, crt-hyllian, crt-aperture, crt-easymode, two crtglow variants, crtsim) with every runtime parameter exposed. Grayed-out controls tell you which switch activates them — many CRT parameters only apply when their feature (curvature, mask, geometry mode…) is on.
-
-**Tips**
-
-- Every value next to a slider is a text field — click and type exact numbers.
-- The effect reads best on game-art-style content: dark scenes, bright sprites, hard edges. Photos work too, but analog artifacts live on contrast.
-- High-resolution sources: turn on **Intensity → Scale with video size** in the NTSC panel so artifact sizes track your input, and expect the NTSC stage to take longer per frame.
-
-## Limitations
-
-- The Intel half of the universal build is community-tested, not author-tested (see the note up top).
-- The NTSC stage runs on the CPU at your source's full resolution — with **Animate** on or during video playback, 4K+ sources will noticeably drop the preview frame rate. Exports always render every frame regardless.
-- Video playback decodes and runs the analog stage on a background pipeline and plays in real time, dropping the occasional frame when a spike hits (the NLE approach) rather than slowing down. On top of that, finished frames are kept in a RAM preview (the After Effects model): while a video sits paused the app keeps rendering ahead through the clip — the green line under the scrubber shows how far it has got — and once a loop is covered it plays with no per-frame CPU work at all, and scrubbing inside the green is instant. Any change to the NTSC, downscale or timeline settings starts it over. The cache is capped at a quarter of memory (at most 1 GB, roughly a minute of 320px-wide frames); past that the rest of the clip streams live. Exports always render every frame regardless.
-- A few crt-royale parameters are compile-time disabled in the shader itself (marked "static in this shader build") — they do nothing in RetroArch either.
-- No undo — save Presets before big experiments.
+| Path | What |
+|---|---|
+| [`windows/`](windows/) | **VHS-Studio** — the Rust workspace (`vhs-studio-core`, `vhs-studio-app`), presets, packaging script, [README](windows/README.md) and [HANDOFF](windows/HANDOFF.md) |
+| `Sources/`, `Package.swift`, `Tests/` | the original NTSCRT macOS app (Swift) |
+| `presets/` | the bundled app presets both apps load |
+| `Vendor/` | vendored dependencies, including the `slang-shaders` submodule the CRT shaders come from |
+| `docs/` | images and the [macOS README](docs/README-macOS.md) |
 
 ## Building from source
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for the full developer setup (Swift + Rust toolchains, vendored dependencies, CLI tools, release pipeline).
+```powershell
+git clone --recurse-submodules https://github.com/scythe000/NTSCRT
+cd NTSCRT\windows
+cargo build --release
+.\target\release\vhs-studio.exe
+```
+
+Needs a Rust toolchain (`rustup`, stable) and the Visual Studio Build Tools' C++ workload; the app links the C runtime statically, so the result runs on any Windows machine. `.\package.ps1` stages a release folder with ffmpeg and zips it — the same script CI runs. `vhs-studio-smoke.exe` is a headless verifier that renders frames and reports what it finds, handy for bug reports. See [windows/README.md](windows/README.md#build) for details and [windows/HANDOFF.md](windows/HANDOFF.md) for the whole story of the code.
+
+## Limitations
+
+- The NTSC stage runs on the CPU at your source's full resolution. With **Animate** on, 4K sources drop the preview frame rate; exports render every frame regardless.
+- No undo — save a preset before big experiments.
+- The download is unsigned, so SmartScreen warns once.
+- Not frame-identical to the macOS NTSCRT (different shader runtime backend); deterministic on its own.
 
 ## Credits
 
+- [NTSCRT](https://github.com/finnmckenty/NTSCRT) by Finn McKenty — the original app this grew out of
 - [ntsc-rs](https://github.com/ntsc-rs/ntsc-rs) — the NTSC/VHS signal emulation (MIT/ISC/Apache-2.0)
 - [librashader](https://github.com/SnowflakePowered/librashader) by SnowflakePowered — the RetroArch-compatible shader runtime (MPL-2.0)
 - [libretro/slang-shaders](https://github.com/libretro/slang-shaders) and the RetroArch community — the CRT shaders themselves: crt-royale by TroggleMonkey, crt-easymode and crt-aperture by EasyMode, crt-hyllian by Hyllian, crtsim, crtglow (various licenses, largely GPL)
+- [FFmpeg](https://ffmpeg.org) — decoding and encoding; the bundled build is from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) (GPL)
+- [wgpu](https://wgpu.rs) and [egui](https://github.com/emilk/egui) — the GPU and UI layers

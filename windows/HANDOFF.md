@@ -19,7 +19,12 @@ from, which is credited in the README, the About box and
 `vhs-studio-smoke --version`. Where you still see "the Mac" or "the macOS
 app", that is NTSCRT. The icon is still NTSCRT's (`Assets/icon-source.png`)
 — a VHS-Studio icon is on the to-do list. The preset file format is
-unchanged and still moves between the two apps.
+unchanged and still moves between the two apps. The repository's **root
+`README.md` is VHS-Studio's front page** (what GitHub renders for the
+branch), with `docs/vhs-studio-header.webp` as its picture; NTSCRT's own
+macOS README moved to `docs/README-macOS.md`, links fixed. The GitHub
+"About" sidebar is the repository *description* in Settings, not a file —
+it still reads as the macOS tool until the owner changes it.
 
 The first 14 commits built the port headlessly. The next batch was a second
 pass with a screen: the GUI was run on a Linux desktop, looked at, and fixed,

@@ -3,7 +3,7 @@ name = "vhs-studio-app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "NTSCRT for Windows: ntsc-rs signal emulation + RetroArch CRT shaders, on wgpu/egui"
+description = "VHS-Studio: ntsc-rs signal emulation, colour grade and RetroArch CRT shaders, on wgpu/egui"
 
 [lib]
 name = "vhs_studio_app"

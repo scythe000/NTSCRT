@@ -18,7 +18,7 @@ pipeline, the house VHS look, the preset format, the keyframe model, the
 bundled presets and most of its design. It has since become its own program
 — a colour-grade stage, bundled ffmpeg and other things the Mac app doesn't
 have — so it has its own name. The macOS NTSCRT app lives in the rest of this
-repository (`Sources/`, [README](../README.md)); the Windows app is
+repository (`Sources/`, [its README](../docs/README-macOS.md)); the Windows app is
 everything under `windows/`. As with NTSCRT: all the actual image magic
 belongs to ntsc-rs and the RetroArch shader community.
 
