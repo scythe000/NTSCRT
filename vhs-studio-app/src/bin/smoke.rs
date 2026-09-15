@@ -9,7 +9,7 @@
 //! ```text
 //! vhs-studio-smoke <input> <output.png> [--shader royale] [--downscale 320]
 //!              [--method area] [--height 960] [--no-ntsc] [--no-shader] [--snap]
-//!              [--ntsc-preset preset.json] [--frame N] [--list-shaders]
+//!              [--ntsc-preset preset.json] [--frame N] [--list-shaders] [--shader-files]
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -27,6 +27,7 @@ vhs-studio-smoke — headless VHS-Studio pipeline verifier
 USAGE:
     vhs-studio-smoke <input-image|video> <output.png> [options]
     vhs-studio-smoke --list-shaders
+    vhs-studio-smoke --shader-files
     vhs-studio-smoke --list-params [shader-id]
     vhs-studio-smoke --list-grade
     vhs-studio-smoke --ffmpeg
@@ -282,10 +283,28 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     if args.iter().any(|a| a == "--list-shaders") {
+        match vhs_studio_app::presets::shaders_root_and_source() {
+            Some((root, source)) => println!("shaders: {} — {}", source.describe(), root.display()),
+            None => println!("shaders: no tree found (MISSING)"),
+        }
         for p in vhs_studio_app::presets::ALL {
             let found = vhs_studio_app::presets::resolve(p).is_some();
             println!("{:<14} {:<22} {}", p.id, p.display_name,
                      if found { "ok" } else { "MISSING" });
+        }
+        return Ok(());
+    }
+    // The pack's manifest: what the seven presets pull in, and how big the
+    // embedded blob is. This is the list that replaced shipping the whole
+    // slang-shaders tree; check it when a preset changes.
+    if args.iter().any(|a| a == "--shader-files") {
+        let pack = vhs_studio_app::presets::SHADER_PACK;
+        let files = vhs_studio_app::shader_pack::unpack(pack)?;
+        let total: usize = files.iter().map(|(_, d)| d.len()).sum();
+        println!("shader pack {}: {} files, {} KB unpacked, {} KB embedded",
+                 vhs_studio_app::presets::SHADER_PACK_ID, files.len(), total / 1024, pack.len() / 1024);
+        for (name, data) in &files {
+            println!("{:>8}  {}", data.len(), name);
         }
         return Ok(());
     }

@@ -16,6 +16,7 @@ pub mod pacer;
 pub mod param_gates;
 pub mod presets;
 pub mod render;
+pub mod shader_pack;
 pub mod ui;
 pub mod video;
 

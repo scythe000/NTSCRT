@@ -37,6 +37,9 @@ rfd = "0.15"
 arboard = { version = "3", default-features = false }
 pollster = "0.4"
 bytemuck = { version = "1", features = ["derive"] }
+# Unpacks the embedded shader pack (shader_pack.rs). Already in the tree via
+# the PNG codec; the default pure-Rust backend.
+flate2 = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 log = "0.4"
@@ -54,3 +57,5 @@ eframe = { version = "0.36.2", default-features = false, features = ["wgpu", "de
 winresource = "0.1"
 # Turns Assets/icon-source.png into the .ico at build time (see build.rs).
 image = { version = "0.25", default-features = false, features = ["png", "ico"] }
+# Packs the shader closure (see build.rs and src/shader_pack.rs).
+flate2 = "1"

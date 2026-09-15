@@ -68,8 +68,10 @@ Building additionally needs:
 
 Download `VHS-Studio-<version>-windows-x64.zip` from the
 [releases](https://github.com/scythe000/NTSCRT/releases), unzip it anywhere,
-run `vhs-studio.exe`. The folder is self-contained: `shaders/`, `presets/`,
-`ffmpeg.exe`/`ffprobe.exe` and their DLLs all sit beside the executable.
+run `vhs-studio.exe`. The folder is self-contained: `presets/`,
+`ffmpeg.exe`/`ffprobe.exe` and their DLLs sit beside the executable, and the
+CRT shaders are inside `vhs-studio.exe` itself (unpacked to your user cache
+the first time it runs; see [Asset locations](#asset-locations)).
 
 The zip holds two programs. `vhs-studio.exe` is the app. `vhs-studio-smoke.exe` is
 a command-line tool that runs the same pipeline without a window — it
@@ -109,9 +111,9 @@ pwsh ./package.ps1        # tests, builds, stages and zips
 ```
 
 Produces `dist/VHS-Studio-<version>-windows-x64.zip` with both binaries,
-the shader tree, the presets, the README, this guide and ffmpeg, after checking that the
-seven shaders resolve from the staged folder and that the staged ffmpeg is the
-one the app finds. The ffmpeg is a pinned build — release tag, asset name and
+the presets, the README, this guide and ffmpeg, after checking that the
+seven shaders unpack and resolve from the staged executable's embedded pack
+and that the staged ffmpeg is the one the app finds. The ffmpeg is a pinned build — release tag, asset name and
 SHA-256 in `ffmpeg-bundle.json` — downloaded from
 [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds), verified, and
 staged as `ffmpeg.exe`, `ffprobe.exe` and the `av*`/`sw*` DLLs (the shared
@@ -282,7 +284,8 @@ rule of thumb, crisp scanlines want 3+ output rows per downscale line.
 .\target\release\vhs-studio-smoke.exe input.png out.png --preset "Medium VHS" --height 720
 
 # Inventory
-.\target\release\vhs-studio-smoke.exe --list-shaders          # which shaders resolve here
+.\target\release\vhs-studio-smoke.exe --list-shaders          # which shaders resolve here, and from where
+.\target\release\vhs-studio-smoke.exe --shader-files         # the embedded shader pack's manifest
 .\target\release\vhs-studio-smoke.exe --list-presets          # bundled presets and what they set
 .\target\release\vhs-studio-smoke.exe --list-params royale    # a shader's parameters, ranges and defaults
 .\target\release\vhs-studio-smoke.exe --list-grade            # the colour-grade controls
@@ -316,10 +319,20 @@ checking that a shader's metadata reaches the UI.
 
 ## Asset locations
 
-The app looks for the shader tree beside the executable (`shaders/`) and then
-walks up to find `Vendor/slang-shaders`, so it works from both an install and
-a source checkout. Override with `VHS_STUDIO_SHADERS`; `VHS_STUDIO_PRESETS` does the
-same for the bundled `presets/` JSON. ffmpeg and ffprobe are looked for
+**Shaders.** The seven CRT presets and every file they `#include` or
+sample — about 70 files, 0.7 MB compressed — are built into `vhs-studio.exe`
+as one pack (`build.rs` walks the slang-shaders submodule at build time;
+`vhs-studio-smoke --shader-files` lists what went in). librashader reads
+shaders from disk, so on first run the pack is unpacked to
+`%LOCALAPPDATA%\VHS-Studio\shaders\<hash>` (a few milliseconds, once per
+build; `~/.cache/vhs-studio/shaders/` on Linux, `VHS_STUDIO_CACHE` moves it)
+and that directory is used from then on. Rendering is unaffected — the
+shaders compile from the same files as before. To use a different shader
+tree, put a `shaders/` directory beside the executable or set
+`VHS_STUDIO_SHADERS`; both take precedence over the pack. A source build
+without the submodule embeds an empty pack and walks up to find
+`Vendor/slang-shaders` instead. `VHS_STUDIO_PRESETS` overrides the bundled
+`presets/` JSON. ffmpeg and ffprobe are looked for
 beside the executable first (the zip puts them there), then on PATH;
 `VHS_STUDIO_FFMPEG` and `VHS_STUDIO_FFPROBE` point at a specific executable.
 
@@ -373,7 +386,7 @@ On an RTX 3090 (Vulkan backend):
 - A HEIC still renders through ffmpeg 7.0 (320×240 in, 1280×960 out), an
   AVIF through ffmpeg 6.1, and ffmpeg 6.1 refuses the HEIC with a message
   naming the version it needs.
-- 178 tests pass (`cargo test --release`), no warnings.
+- 185 tests pass (`cargo test --release`), no warnings.
 
 On a Linux desktop (X11, Mesa's software Vulkan driver — a verification
 target, not a shipping one), driving the window with `xdotool` and reading

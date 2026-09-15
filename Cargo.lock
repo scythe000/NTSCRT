@@ -4033,6 +4033,7 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "env_logger",
+ "flate2",
  "image",
  "librashader",
  "librashader-common",

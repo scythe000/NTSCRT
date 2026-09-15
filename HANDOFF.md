@@ -139,8 +139,9 @@ artifact paths in the workflow (`dist/*.zip`).
 | Eight colour presets (B&W, Solarized, Inverted, Blade Runner, Max Headroom, Neon, Red/Cyan highlight) | ✅ smoke-rendered side by side and loaded in the GUI; now stackable colour layers (checkboxes) over any look |
 | ffmpeg bundled beside the exe (pinned build, SHA-256 checked) | ✅ CI on `windows-latest`: digest ok, staged copy is the one resolved, ffmpeg 8.1.2 runs; 143 MB zip |
 | About box (version, commit, date, libraries; Copy; F1) + version in the title + `vhs-studio-smoke --version` (adds ffmpeg) | ✅ on screen; report copied to the clipboard |
+| Shaders embedded as one pack (70 files / 0.7 MB in the exe, replacing a 4,963-file `shaders/`) | ✅ all seven render byte-identically from the pack and from the full tree; unpack 5 ms once; `package.ps1` asserts the staged exe uses it; needs the Windows runner to confirm the zip size |
 
-**178 tests, zero warnings.** 62 in `vhs-studio-core`, 116 in `vhs-studio-app`.
+**185 tests, zero warnings.** 62 in `vhs-studio-core`, 123 in `vhs-studio-app`.
 
 ### Parity with the macOS app
 
@@ -271,11 +272,12 @@ from the workflow is the thing to run first.
     render.rs             HeadlessRenderer, FrameSequence — the export path
     bin/smoke.rs          vhs-studio-smoke, the headless verifier
     about.rs              build description (from build.rs env vars); ui/about_window.rs shows it
+    presets.rs            shader catalog; shader root lookup incl. unpacking the embedded pack
+    shader_pack.rs        preset file closure + pack format; compiled into build.rs too
+    build.rs              shader pack, .ico from Assets/icon-source.png, DPI manifest, build info
   ffmpeg-bundle.json      the pinned ffmpeg build package.ps1 ships
-  package.ps1             stage + zip, incl. the ffmpeg download and checks
-    build.rs              .ico from Assets/icon-source.png + DPI manifest (Windows only)
-  package.ps1             stage + zip a release; also what CI runs
-.github/workflows/windows.yml   build, test, package; release on v* tags
+  package.ps1             stage + zip, incl. the ffmpeg download and checks; also what CI runs
+  .github/workflows/windows.yml   build, test, package; release on v* tags
 ```
 
 Two binaries: `vhs-studio.exe` (the app) and `vhs-studio-smoke.exe` (the verifier).
@@ -309,9 +311,11 @@ pwsh ./package.ps1                  # → dist/VHS-Studio-<version>-windows-x64.
 ```
 
 The script runs the tests, builds, stages `vhs-studio.exe`, `vhs-studio-smoke.exe`,
-`shaders/` (the whole slang-shaders tree minus `.git`), `presets/` and the
-README, runs `vhs-studio-smoke --list-shaders` *from the staged folder* to prove
-the beside-the-exe lookup works, and zips. The workflow does the same on
+`presets/`, the README and guide, and ffmpeg; runs `vhs-studio-smoke
+--list-shaders` *from the staged folder* with a fresh cache directory to
+prove the embedded shader pack unpacks and all seven presets resolve from
+it (not from the `Vendor/` tree it could find by walking up from `dist/`);
+and zips. The workflow does the same on
 `windows-latest` and attaches the zip to a Release for a `v*` tag.
 
 ### Building on Linux, for looking at the GUI
@@ -347,7 +351,8 @@ without a screen. Learn it before changing anything.
 
 ```powershell
 # Inventory
-vhs-studio-smoke --list-shaders            # which shaders resolve here
+vhs-studio-smoke --list-shaders            # which shaders resolve here, and from where
+vhs-studio-smoke --shader-files            # the embedded pack's manifest
 vhs-studio-smoke --list-presets            # bundled presets and what they set
 vhs-studio-smoke --list-params royale      # a shader's params, ranges, defaults
 vhs-studio-smoke --timeline "Very wavy"    # evaluate a preset's animation
@@ -646,13 +651,49 @@ at 0.45 that muddied everything and had the glow shader's strength at 0.1.
 It is now saturation 2, contrast 1.35, blacks crushed, a faint blue-violet
 in the shadows only, and (for whole-file loads) glow strength 0.7.
 
-### The whole shader tree ships
+### The shaders are one pack inside the executable
 
-The seven `.slangp` files reference a few dozen `.slang` files, but those
-`#include` across `include/`, `misc/` and `crt-effects/`. A pruned copy
-breaks the day a shader gains an include; the full tree is 65 MB of text
-that zips to well under half of that. `shaders/` beside the exe is the first
-place `presets::shaders_root` looks.
+Until the cleanup, `shaders/` beside the exe was the whole slang-shaders
+tree — 4,963 files, 77 MB — because the `.slang` sources `#include` across
+directories and nobody had computed which files the seven presets actually
+reach. `shader_pack.rs` computes it: `closure()` walks each `.slangp`
+(`#reference`, `shaderN =`, the `textures` list and each named texture's
+path) and each source's `#include` lines recursively, normalising `..` so a
+file reached two ways is one entry, and errors on a reference that doesn't
+exist. `build.rs` includes that file with `#[path]` (it is std + flate2
+only for that reason), runs the walk over `Vendor/slang-shaders`, and
+writes the 70 files (1.2 MB; 0.7 MB compressed) as one deflate stream —
+one stream rather than zip's per-file compression, because a hundred small
+GLSL files share their vocabulary — to `OUT_DIR/shaders.pack`, which
+`presets.rs` embeds with `include_bytes!`. Every file in the closure is a
+`rerun-if-changed`, so editing a shader rebuilds the pack; a preset gaining
+an include changes the `.slangp` or a `.slang` already in the list, so the
+walk re-runs and picks it up — the failure mode the "ship everything"
+approach was guarding against is now a build error, not a runtime one.
+
+librashader resolves includes and textures from disk, so the pack has to
+become files once: `presets::embedded_shaders` unpacks it into
+`<cache>/shaders/<content-hash>/` (`%LOCALAPPDATA%\VHS-Studio` on Windows,
+`~/.cache/vhs-studio` on Linux, `VHS_STUDIO_CACHE` to override), writing to
+a `.tmp-<pid>` directory and renaming into place so a crash or two
+instances racing never leaves a half tree that looks complete; a
+`.complete` marker inside is what later launches check. Measured: 5 ms on
+the first run, nothing after. The hash (`SHADER_PACK_ID`, FNV-1a of the
+pack bytes, computed in `build.rs`) means a new build never reads a stale
+extraction; old directories are not cleaned up (each is 1.2 MB).
+
+Lookup order in `shaders_root_and_source`: `VHS_STUDIO_SHADERS`, then
+`shaders/` beside the exe, then the pack, then the walk up to
+`Vendor/slang-shaders`. The pack comes *before* the source tree
+deliberately: a dev build then exercises exactly what ships, and
+`package.ps1`'s staged check asserts `--list-shaders` reports "embedded
+pack" (the staged exe sits under `dist/`, inside the repo, so the walk-up
+would otherwise succeed and prove nothing). A build without the submodule
+gets a `cargo:warning` and an empty pack, and falls through to the tree.
+`VHS_STUDIO_SHADER_PACK` at build time points `build.rs` at a different
+checkout. Verified by rendering all seven shaders from the pack and from
+`VHS_STUDIO_SHADERS=Vendor/slang-shaders` and byte-comparing the PNGs:
+identical. `vhs-studio-smoke --shader-files` prints the manifest.
 
 ### House defaults live in `vhs-studio-core`, as data
 

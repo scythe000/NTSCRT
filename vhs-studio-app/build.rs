@@ -1,5 +1,11 @@
-//! Windows resources (the app icon and the application manifest) and the
-//! build description the About box shows.
+//! Windows resources (the app icon and the application manifest), the
+//! build description the About box shows, and the shader pack.
+//!
+//! The shader pack is the part of the slang-shaders submodule the seven CRT
+//! presets actually use — about a hundred files of five thousand — packed
+//! into one compressed blob (`shader_pack.rs`, shared with the crate through
+//! `#[path]`) that the app embeds. A checkout without the submodule builds
+//! an empty pack and the app falls back to looking for a tree on disk.
 //!
 //! The icon's source of truth is `Assets/icon-source.png`, the same 1024px
 //! render the macOS `.icns` is made from, so the two builds cannot drift
@@ -11,7 +17,12 @@
 
 use std::path::{Path, PathBuf};
 
+#[path = "src/shader_pack.rs"]
+#[allow(dead_code)]
+mod shader_pack;
+
 const ICON_SOURCE: &str = "../Assets/icon-source.png";
+const SHADERS_SOURCE: &str = "../Vendor/slang-shaders";
 
 /// Sizes Explorer and the taskbar actually pick from. 256 is the ceiling the
 /// ICO format allows per entry.
@@ -39,6 +50,7 @@ fn main() {
     describe_build();
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
+    write_shader_pack(Path::new(SHADERS_SOURCE), &out_dir.join("shaders.pack"));
     let ico = out_dir.join("vhs-studio.ico");
     let source = Path::new(ICON_SOURCE);
 
@@ -67,6 +79,40 @@ fn main() {
             println!("cargo:warning=Windows resources not embedded: {e}");
         }
     }
+}
+
+/// Pack the presets' closure from `source` into `dest` and tell the crate
+/// where it is. `VHS_STUDIO_SHADER_PACK` overrides the source tree, for
+/// building against a different slang-shaders checkout.
+fn write_shader_pack(source: &Path, dest: &Path) {
+    println!("cargo:rerun-if-env-changed=VHS_STUDIO_SHADER_PACK");
+    let override_root = std::env::var_os("VHS_STUDIO_SHADER_PACK").map(PathBuf::from);
+    let root = override_root.as_deref().unwrap_or(source);
+
+    let bytes = if root.join("crt").is_dir() {
+        match shader_pack::closure(root, shader_pack::PRESETS) {
+            Ok(files) => {
+                for f in &files {
+                    println!("cargo:rerun-if-changed={}", root.join(f).display());
+                }
+                // Also when a preset gains a file: the presets themselves
+                // are in the list, so an edited .slangp re-runs the walk.
+                shader_pack::pack(root, &files).expect("packing the shader closure")
+            }
+            Err(e) => panic!("shader pack: {e} (in {})", root.display()),
+        }
+    } else {
+        println!(
+            "cargo:warning=no shader pack: {} is not a slang-shaders checkout \
+             (run: git submodule update --init --depth 1 Vendor/slang-shaders); \
+             the app will look for a tree on disk instead",
+            root.display()
+        );
+        shader_pack::empty()
+    };
+    std::fs::write(dest, &bytes).expect("writing the shader pack");
+    println!("cargo:rustc-env=VHS_STUDIO_SHADER_PACK_FILE={}", dest.display());
+    println!("cargo:rustc-env=VHS_STUDIO_SHADER_PACK_ID={}", shader_pack::content_id(&bytes));
 }
 
 fn write_ico(source: &Path, dest: &Path) -> Result<(), Box<dyn std::error::Error>> {

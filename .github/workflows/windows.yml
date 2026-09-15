@@ -27,7 +27,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # ntsc-rs is the signal stage; slang-shaders is what ships in shaders/.
+          # ntsc-rs is the signal stage; slang-shaders is what build.rs packs
+          # into the executable (the seven CRT presets and their includes).
           submodules: true
 
       - uses: dtolnay/rust-toolchain@stable

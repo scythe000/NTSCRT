@@ -12,14 +12,16 @@ looks for beside its executable (see vhs-studio-app/src/presets.rs):
         ffmpeg.exe          video decode/encode, a pinned build (see below)
         ffprobe.exe
         av*.dll sw*.dll     ffmpeg's libraries
-        shaders/            the slang-shaders tree (crt/, include/, blurs/, ...)
         presets/            the bundled look presets
         licenses/           FFmpeg's licence and where its source is
         README.md GUIDE.md  the front page and the full guide
 
-The whole slang-shaders tree ships rather than the seven presets' files
-because .slang sources #include across directories (include/, misc/,
-crt-effects/); a pruned copy breaks the moment a shader gains an include.
+The CRT shaders are not staged as files: build.rs packs the seven presets
+and everything they #include or sample (about 70 files of the submodule's
+5,000) into one compressed blob inside vhs-studio.exe, which unpacks it to
+the user's cache directory on first run (see vhs-studio-app/src/shader_pack.rs).
+The submodule is still needed here, to build. A shaders/ directory beside
+the exe, if someone adds one, takes precedence over the pack.
 
 ffmpeg is bundled so the zip runs on a machine with nothing installed and
 so every install decodes and encodes identically (HEIC needs 7.1+; an old
@@ -61,6 +63,8 @@ $repo = $PSScriptRoot
 $shadersSource = Join-Path $repo 'Vendor/slang-shaders'
 $presetsSource = Join-Path $repo 'presets'
 
+# build.rs embeds the shader pack from the submodule; without it the exe
+# would build with an empty pack and find no shaders on a user's machine.
 if (-not (Test-Path (Join-Path $shadersSource 'crt'))) {
     throw "Vendor/slang-shaders is empty. Run: git submodule update --init --depth 1 Vendor/ntsc-rs Vendor/slang-shaders"
 }
@@ -104,20 +108,6 @@ try {
     Copy-Item (Join-Path $bin "vhs-studio-smoke$exeSuffix") $stage
     Copy-Item (Join-Path $repo 'README.md') $stage
     Copy-Item (Join-Path $repo 'docs/GUIDE.md') $stage
-
-    # The shader tree, minus its .git. Copy-Item has no exclude-directory, so
-    # walk the files and rebuild the relative paths.
-    $shadersDest = Join-Path $stage 'shaders'
-    $sourceRoot = (Resolve-Path $shadersSource).Path
-    Get-ChildItem -Path $shadersSource -Recurse -File -Force |
-        Where-Object { $_.FullName.Substring($sourceRoot.Length) -notmatch '[\\/]\.git([\\/]|$)' } |
-        ForEach-Object {
-            $rel = $_.FullName.Substring($sourceRoot.Length).TrimStart('\', '/')
-            $dest = Join-Path $shadersDest $rel
-            $dir = Split-Path $dest -Parent
-            if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-            Copy-Item $_.FullName $dest
-        }
 
     New-Item -ItemType Directory -Force -Path (Join-Path $stage 'presets') | Out-Null
     Copy-Item (Join-Path $presetsSource '*.json') (Join-Path $stage 'presets')
@@ -183,16 +173,22 @@ try {
         Write-Host ("   staged {0} MB of ffmpeg" -f [math]::Round($shipped / 1MB))
     }
 
-    # Prove the staged layout resolves its own assets before zipping: this is
-    # the "beside the executable" lookup the install relies on, and the one
-    # thing a source-tree build never exercises.
-    Write-Host '== checking the staged shaders resolve ==' -ForegroundColor Cyan
+    # Prove the staged executable carries its shaders: the pack must be the
+    # source (not the Vendor/ tree it could find by walking up from dist/),
+    # and all seven presets must resolve from it. A fresh cache directory so
+    # the unpack itself runs here, not just the "already there" path.
+    Write-Host '== checking the embedded shaders unpack and resolve ==' -ForegroundColor Cyan
     $env:VHS_STUDIO_SHADERS = $null
     $env:VHS_STUDIO_PRESETS = $null
+    $env:VHS_STUDIO_CACHE = Join-Path $Out 'cache-check'
+    if (Test-Path $env:VHS_STUDIO_CACHE) { Remove-Item -Recurse -Force $env:VHS_STUDIO_CACHE }
     $listing = & (Join-Path $stage "vhs-studio-smoke$exeSuffix") --list-shaders
     if ($LASTEXITCODE -ne 0) { throw "vhs-studio-smoke --list-shaders failed ($LASTEXITCODE)" }
     $listing | ForEach-Object { Write-Host "   $_" }
-    if ($listing -match 'MISSING') { throw 'a bundled shader does not resolve from the staged folder' }
+    if ($listing -match 'MISSING') { throw 'a bundled shader does not resolve from the staged executable' }
+    if (-not ($listing[0] -match 'embedded pack')) { throw "the staged executable did not use its embedded shader pack: $($listing[0])" }
+    Remove-Item -Recurse -Force $env:VHS_STUDIO_CACHE
+    $env:VHS_STUDIO_CACHE = $null
 
     # And that the app finds the bundled ffmpeg first — the lookup is "beside
     # the executable, then PATH", and this is the one place it is exercised
