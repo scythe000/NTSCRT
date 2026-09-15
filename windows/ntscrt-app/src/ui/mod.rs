@@ -9,6 +9,7 @@ mod downscale_panel;
 mod ntsc_panel;
 mod preview_panel;
 mod shader_panel;
+mod timeline_bar;
 mod transport_bar;
 
 use eframe::egui;
@@ -46,6 +47,15 @@ pub fn top_bar(app: &mut NtscrtApp, root: &mut egui::Ui, rs: Option<&RenderState
             }
             ui.separator();
 
+            if ui
+                .selectable_label(app.timeline_open, "Timeline")
+                .on_hover_text(
+                    "Keyframe-animate the whole effect chain and render it as video.",
+                )
+                .clicked()
+            {
+                app.timeline_open = !app.timeline_open;
+            }
             ui.checkbox(&mut app.animate, "Animate")
                 .on_hover_text("Run the preview continuously so tape noise, jitter and \
                                 interlacing actually move.");
@@ -559,6 +569,10 @@ pub fn status_bar(app: &mut NtscrtApp, root: &mut egui::Ui) {
             }
         });
     });
+}
+
+pub fn timeline(app: &mut NtscrtApp, root: &mut egui::Ui) {
+    timeline_bar::show(app, root);
 }
 
 pub fn preview(app: &mut NtscrtApp, root: &mut egui::Ui, rs: Option<&RenderState>) {

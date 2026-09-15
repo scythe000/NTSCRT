@@ -107,6 +107,10 @@ pub struct NtscrtApp {
     pub timeline: Option<ntscrt_core::Timeline>,
     /// Playhead position, 0..1 along the timeline.
     pub playhead: f64,
+    /// Previewing the keyframe animation on a still (a video uses playback).
+    pub timeline_playing: bool,
+    /// Whether the timeline bar is shown.
+    pub timeline_open: bool,
 
     pub status: Option<String>,
     pub error: Option<String>,
@@ -160,6 +164,8 @@ impl NtscrtApp {
             source_texture: None,
             timeline: None,
             playhead: 0.0,
+            timeline_playing: false,
+            timeline_open: false,
             status: None,
             error: None,
             dirty: true,
@@ -478,6 +484,11 @@ impl eframe::App for NtscrtApp {
             self.frame_count = self.frame_count.wrapping_add(1);
             ctx.request_repaint();
         }
+        // Previewing a keyframe animation advances the playhead itself.
+        if self.timeline_playing {
+            self.tick_timeline_preview();
+            ctx.request_repaint();
+        }
 
         // An export publishes progress from its own thread, so the window
         // has to keep repainting to show it moving.
@@ -491,6 +502,7 @@ impl eframe::App for NtscrtApp {
         crate::ui::top_bar(self, ui, render_state.as_ref());
         crate::ui::sidebar(self, ui, render_state.as_ref());
         crate::ui::status_bar(self, ui);
+        crate::ui::timeline(self, ui);
         crate::ui::transport_bar(self, ui);
         crate::ui::preview(self, ui, render_state.as_ref());
 

@@ -6,6 +6,7 @@
 
 pub mod app;
 pub mod app_preset;
+pub mod app_timeline;
 pub mod app_video;
 pub mod gpu;
 pub mod image_io;
