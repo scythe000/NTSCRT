@@ -106,7 +106,7 @@ counterpart in its header comment. Port *behaviour*, not frameworks.
 | Colour-grade stage (`vhs-studio-core/src/grade.rs`, `gpu/grade.{rs,wgsl}`, `ui/grade_panel.rs`) | ✅ GPU pass matches the CPU reference within 0.5/255; panel driven on screen; keyframes and presets carry it |
 | Eight colour presets (B&W, Solarized, Inverted, Blade Runner, Max Headroom, Neon, Red/Cyan highlight) | ✅ smoke-rendered side by side and loaded in the GUI; now stackable colour layers (checkboxes) over any look |
 | ffmpeg bundled beside the exe (pinned build, SHA-256 checked) | ✅ CI on `windows-latest`: digest ok, staged copy is the one resolved, ffmpeg 8.1.2 runs; 143 MB zip |
-| About box (version, commit, date, GPU, ffmpeg, libraries; Copy; F1) + version in the title + `vhs-studio-smoke --version` | ✅ on screen; report copied to the clipboard |
+| About box (version, commit, date, libraries; Copy; F1) + version in the title + `vhs-studio-smoke --version` (adds ffmpeg) | ✅ on screen; report copied to the clipboard |
 
 **178 tests, zero warnings.** 62 in `vhs-studio-core`, 116 in `vhs-studio-app`.
 
@@ -678,6 +678,13 @@ does not, which is acceptable. Library versions are scraped from
 `Cargo.lock` by text (`name = "…"` then the next line's `version`), not
 from `cargo metadata`, to keep the build script dependency-free. Without
 git (a tarball) everything says "unknown" and the build still succeeds.
+
+The About box shows only this compile-time data. It used to probe ffmpeg
+(`ffmpeg -version`, a subprocess) when opened and show the GPU adapter;
+on a Windows desktop the probe made the box take a visible moment to
+appear, so both went — the owner's call: static information only. The
+live details stay available from `vhs-studio-smoke --version` and
+`--ffmpeg`, which is where a bug report should get them.
 
 ### The icon is generated, not committed
 

@@ -289,7 +289,7 @@ rule of thumb, crisp scanlines want 3+ output rows per downscale line.
 .\target\release\vhs-studio-smoke.exe --list-params royale    # a shader's parameters, ranges and defaults
 .\target\release\vhs-studio-smoke.exe --list-grade            # the colour-grade controls
 .\target\release\vhs-studio-smoke.exe --ffmpeg                # which ffmpeg/ffprobe the app will run, and from where
-.\target\release\vhs-studio-smoke.exe --version               # the About box as text: version, commit, ffmpeg, libraries
+.\target\release\vhs-studio-smoke.exe --version               # the About box as text, plus the ffmpeg version and source
 ```
 
 ```powershell
@@ -396,8 +396,9 @@ through the middle. The Colour panel enables, drags saturation to 0 and the
 preview goes black and white through the CRT shader; loading 'Blade Runner'
 tints the preview and fills the panel with its values, and loading 'Clean
 CRT' after it turns the grade off and returns every control to neutral.
-The About box opens from the button and from F1, shows the commit and the
-llvmpipe adapter, and Copy puts the report on the clipboard. Opening a
+The About box opens from the button and from F1 with no delay (it is all
+compile-time text; the ffmpeg probe it once ran lives in
+`vhs-studio-smoke --version`), and Copy puts the report on the clipboard. Opening a
 6000×6000 PNG shows the spinner beside Open, the "Opening big6k.png…" card
 over the old picture and the status line, with the window still painting,
 then swaps the picture in; opening a 4K clip lands on frame 1/120 with the
