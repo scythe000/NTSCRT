@@ -19,7 +19,9 @@ const BAR_HEIGHT: f32 = 3.0;
 const BAR_INSET: f32 = 8.0;
 
 pub fn show(app: &mut NtscrtApp, root: &mut egui::Ui) {
-    if app.video.is_none() {
+    // On a video the timeline replaces the transport, as on macOS — it has
+    // the same play button and scrubber, plus the keyframes.
+    if app.video.is_none() || app.timeline_open {
         return;
     }
     let ctx = root.ctx().clone();
@@ -104,21 +106,31 @@ pub fn show(app: &mut NtscrtApp, root: &mut egui::Ui) {
 
     // Arrow keys step a frame at a time, which is the other half of "frame
     // accurate": a drag gets you close, these put you exactly where you want.
-    let (back, forward) = ctx.input(|i: &egui::InputState| {
-        (
-            i.key_pressed(egui::Key::ArrowLeft),
-            i.key_pressed(egui::Key::ArrowRight),
-        )
+    // Not while a text field has focus (they move its caret), and not while
+    // the timeline has a keyframe parked — there they nudge the key.
+    if ctx.memory(|m| m.focused().is_some()) || app.timeline_owns_arrows() {
+        return;
+    }
+    // Counted per event, so key repeat and several presses in one slow
+    // frame each step a frame; Shift steps ten.
+    let mut steps: i64 = 0;
+    ctx.input(|i: &egui::InputState| {
+        for e in &i.events {
+            if let egui::Event::Key { key, pressed: true, modifiers, .. } = e {
+                let n = if modifiers.shift { 10 } else { 1 };
+                match key {
+                    egui::Key::ArrowLeft => steps -= n,
+                    egui::Key::ArrowRight => steps += n,
+                    _ => {}
+                }
+            }
+        }
     });
-    if back || forward {
+    if steps != 0 {
         if let Some(video) = app.video.as_ref() {
-            let total = video.total_frames();
-            let current = video.current_frame_index;
-            let next = if forward {
-                (current + 1) % total
-            } else {
-                (current + total - 1) % total
-            };
+            let total = video.total_frames() as i64;
+            let current = video.current_frame_index as i64;
+            let next = (current + steps).rem_euclid(total) as usize;
             app.stop_playback();
             app.seek_to_frame(next);
         }
@@ -141,7 +153,18 @@ fn paint_render_bar(
         egui::pos2((rect.right() - BAR_INSET).max(rect.left() + BAR_INSET + 1.0), rect.bottom()),
     );
     painter.rect_filled(track, 0.0, ui.visuals().faint_bg_color);
+    paint_cached_runs(&painter, track, ranges, total, prerendering);
+}
 
+/// The cached runs themselves, mapped by frame index onto `track`. Shared
+/// with the timeline bar's strip under its ruler, so the two bars agree.
+pub(super) fn paint_cached_runs(
+    painter: &egui::Painter,
+    track: egui::Rect,
+    ranges: &[std::ops::Range<usize>],
+    total: usize,
+    prerendering: bool,
+) {
     // Dimmer while the pre-render is still working, so a bar that is still
     // growing reads differently from one that is finished.
     let colour = if prerendering {

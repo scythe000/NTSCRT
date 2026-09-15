@@ -44,6 +44,28 @@ impl NtscrtApp {
         }
     }
 
+    /// Frames the animation renders to: the clip's own count for a video,
+    /// duration × rate for a still.
+    pub fn effective_frame_count(&self) -> usize {
+        if let Some(v) = self.video.as_ref() {
+            return v.total_frames();
+        }
+        let (duration, fps) = self.effective_timeline();
+        ((duration.max(0.0) * fps.max(1.0)).round() as usize).max(1)
+    }
+
+    /// Quantise a normalised time to the nearest frame, so a dragged or
+    /// nudged keyframe lands where a rendered frame actually is. Frame 0
+    /// is t=0 and the last frame is t=1, matching `Timeline::t_for_frame`.
+    pub fn snap_to_frame(&self, t: f64) -> f64 {
+        let total = self.effective_frame_count();
+        if total <= 1 {
+            return 0.0;
+        }
+        let last = (total - 1) as f64;
+        (t.clamp(0.0, 1.0) * last).round() / last
+    }
+
     /// Build an evaluator for the current timeline, or None when there is
     /// nothing keyed.
     pub fn timeline_evaluator(&self) -> Option<TimelineEvaluator> {
@@ -161,17 +183,45 @@ impl NtscrtApp {
         self.mark_chain_input_edited();
     }
 
-    /// Drag a keyframe to a new time.
-    pub fn move_keyframe(&mut self, index: usize, t: f64) {
+    /// Drag a keyframe to a new time. Returns the key's index afterwards:
+    /// the list stays sorted by time, so dragging one key past another
+    /// changes both their indices, and a drag in progress has to follow the
+    /// key rather than the slot it started in.
+    pub fn move_keyframe(&mut self, index: usize, t: f64) -> Option<usize> {
         let t = t.clamp(0.0, 1.0);
         let tl = self.timeline_mut();
         if index >= tl.keys.len() {
-            return;
+            return None;
         }
-        tl.keys[index].t = t;
-        tl.keys.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
+        let mut key = tl.keys.remove(index);
+        key.t = t;
+        // Insert after any key already at or before `t`, so a key dragged
+        // onto another's exact time settles on the far side of it and the
+        // order of the two stays what the drag direction implies.
+        let at = tl.keys.partition_point(|k| k.t <= t);
+        tl.keys.insert(at, key);
         self.leave_preset();
         self.mark_chain_input_edited();
+        Some(at)
+    }
+
+    /// Step a keyframe by whole frames (arrow keys). Returns its new index.
+    pub fn nudge_keyframe(&mut self, index: usize, frames: i64) -> Option<usize> {
+        let total = self.effective_frame_count();
+        let t = self.timeline_keys().get(index)?.t;
+        if total <= 1 {
+            return Some(index);
+        }
+        let last = (total - 1) as f64;
+        let frame = ((t * last).round() as i64 + frames).clamp(0, last as i64);
+        self.move_keyframe(index, frame as f64 / last)
+    }
+
+    /// Whether the arrow keys belong to the timeline right now — a key is
+    /// parked under the playhead, so Left/Right nudge it — rather than to
+    /// the transport bar's frame stepping.
+    pub fn timeline_owns_arrows(&self) -> bool {
+        self.timeline_open && self.keyframe_at_playhead().is_some()
     }
 
     pub fn set_keyframe_easing(&mut self, index: usize, easing: Easing) {

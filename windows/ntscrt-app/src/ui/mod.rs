@@ -102,7 +102,9 @@ pub fn top_bar(app: &mut NtscrtApp, root: &mut egui::Ui, rs: Option<&RenderState
     if export {
         pick_export(app);
     }
-    if play && app.video.is_some() {
+    // Not while a text field has focus: a space typed there is a space.
+    let typing = ctx.memory(|m| m.focused().is_some());
+    if play && !typing && app.video.is_some() {
         app.toggle_playback();
     }
 
