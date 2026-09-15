@@ -401,7 +401,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if args.first().is_some_and(|a| a == "--version" || a == "-V") {
         // The same text as the app's About box, GPU left out (no context
         // here) and ffmpeg included, since that is what a bug report needs.
-        print!("{}", vhs_studio_app::about::BUILD.report(None, Some(&vhs_studio_app::about::describe_ffmpeg())));
+        print!("{}", vhs_studio_app::about::BUILD.report(Some(&vhs_studio_app::about::describe_ffmpeg())));
         return Ok(());
     }
     if args.first().is_some_and(|a| a == "--ffmpeg") {

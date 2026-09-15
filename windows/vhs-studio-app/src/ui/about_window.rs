@@ -1,22 +1,21 @@
-//! The About box: version, commit, build date, GPU, ffmpeg, library
-//! versions, with a Copy button so the whole thing can be pasted into a bug
-//! report. Opened from the toolbar's About button or F1.
+//! The About box: version, commit, build date and library versions, with a
+//! Copy button so the whole thing can be pasted into a bug report. Opened
+//! from the toolbar's About button or F1.
+//!
+//! Everything shown is known at compile time. An earlier version also
+//! probed ffmpeg (a subprocess) on opening, which on Windows made the box
+//! take a visible moment to appear; the live details are left to
+//! `vhs-studio-smoke --version` and `--ffmpeg`.
 
 use eframe::egui;
 
-use crate::about::{describe_adapter, describe_ffmpeg, BUILD, ORIGIN, ORIGIN_NAME, REPOSITORY};
-use crate::app::{VhsStudioApp, RenderState};
+use crate::about::{BUILD, ORIGIN, ORIGIN_NAME, REPOSITORY};
+use crate::app::VhsStudioApp;
 
-pub fn show(app: &mut VhsStudioApp, ctx: &egui::Context, rs: Option<&RenderState>) {
+pub fn show(app: &mut VhsStudioApp, ctx: &egui::Context) {
     if !app.about_open {
         return;
     }
-    // ffmpeg is a subprocess; probe once per opening, not per frame.
-    if app.about_ffmpeg.is_none() {
-        app.about_ffmpeg = Some(describe_ffmpeg());
-    }
-    let gpu = rs.map(|rs| describe_adapter(&rs.adapter.get_info()));
-    let ffmpeg = app.about_ffmpeg.clone().unwrap_or_default();
 
     let mut open = app.about_open;
     egui::Window::new("About VHS-Studio")
@@ -25,6 +24,9 @@ pub fn show(app: &mut VhsStudioApp, ctx: &egui::Context, rs: Option<&RenderState
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ctx, |ui| {
+            // Wide enough that the version line, the longest, stays on one
+            // line; the grid used to set the width with the GPU row.
+            ui.set_min_width(380.0);
             ui.vertical_centered(|ui| {
                 ui.add_space(4.0);
                 ui.label(egui::RichText::new("VHS-Studio").heading().strong());
@@ -44,8 +46,6 @@ pub fn show(app: &mut VhsStudioApp, ctx: &egui::Context, rs: Option<&RenderState
                     ui.end_row();
                 };
                 row(ui, "Build", &format!("{} {}", BUILD.target, BUILD.profile));
-                row(ui, "GPU", gpu.as_deref().unwrap_or("no GPU context"));
-                row(ui, "ffmpeg", &ffmpeg);
                 row(ui, "ntsc-rs", BUILD.ntsc_rs);
                 row(ui, "librashader", BUILD.librashader);
                 row(ui, "wgpu", BUILD.wgpu);
@@ -59,8 +59,7 @@ pub fn show(app: &mut VhsStudioApp, ctx: &egui::Context, rs: Option<&RenderState
                     .on_hover_text("Copy all of this as text, for a bug report.")
                     .clicked()
                 {
-                    let text = BUILD.report(gpu.as_deref(), Some(&ffmpeg));
-                    match arboard::Clipboard::new().and_then(|mut c| c.set_text(text)) {
+                    match arboard::Clipboard::new().and_then(|mut c| c.set_text(BUILD.report(None))) {
                         Ok(()) => app.status = Some("Build details copied".into()),
                         Err(e) => app.error = Some(format!("Could not copy: {e}")),
                     }
@@ -72,8 +71,4 @@ pub fn show(app: &mut VhsStudioApp, ctx: &egui::Context, rs: Option<&RenderState
             });
         });
     app.about_open = open;
-    if !open {
-        // Probe afresh next time: the user may have just installed ffmpeg.
-        app.about_ffmpeg = None;
-    }
 }

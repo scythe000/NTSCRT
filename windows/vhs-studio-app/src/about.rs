@@ -47,12 +47,17 @@ impl BuildInfo {
     /// The whole box as text, for the Copy button and `vhs-studio-smoke
     /// --version`. `gpu` and `ffmpeg` are whatever the caller could find
     /// out; None prints as not checked.
-    pub fn report(&self, gpu: Option<&str>, ffmpeg: Option<&str>) -> String {
+    /// The report as text, for the clipboard and `vhs-studio-smoke
+    /// --version`. Everything in it is known at compile time except
+    /// `ffmpeg`, which the caller may have probed; the About box passes
+    /// None (it stays static so it opens at once), the smoke tool probes.
+    pub fn report(&self, ffmpeg: Option<&str>) -> String {
         let mut s = String::new();
         s.push_str(&format!("VHS-Studio {}\n", self.short()));
         s.push_str(&format!("target      {} ({})\n", self.target, self.profile));
-        s.push_str(&format!("gpu         {}\n", gpu.unwrap_or("not checked")));
-        s.push_str(&format!("ffmpeg      {}\n", ffmpeg.unwrap_or("not checked")));
+        if let Some(f) = ffmpeg {
+            s.push_str(&format!("ffmpeg      {f}\n"));
+        }
         s.push_str(&format!("ntsc-rs     {}\n", self.ntsc_rs));
         s.push_str(&format!("librashader {}\n", self.librashader));
         s.push_str(&format!("wgpu        {}\n", self.wgpu));
@@ -62,20 +67,6 @@ impl BuildInfo {
         s.push_str(&format!("based on {ORIGIN_NAME}, {ORIGIN}\n"));
         s
     }
-}
-
-/// One line naming the GPU and the backend it is driven through, e.g.
-/// `NVIDIA GeForce RTX 3090 (Vulkan)`.
-pub fn describe_adapter(info: &wgpu::AdapterInfo) -> String {
-    let mut s = info.name.trim().to_string();
-    if s.is_empty() {
-        s.push_str("unknown adapter");
-    }
-    s.push_str(&format!(" ({:?})", info.backend));
-    if !info.driver_info.trim().is_empty() {
-        s.push_str(&format!(", driver {}", info.driver_info.trim()));
-    }
-    s
 }
 
 /// ffmpeg's `-version` first line, shortened to the version itself, plus
@@ -121,10 +112,10 @@ mod tests {
 
     #[test]
     fn the_report_carries_everything_a_bug_report_needs() {
-        let r = BUILD.report(Some("Some GPU (Vulkan)"), None);
+        let r = BUILD.report(None);
         assert!(r.starts_with(&format!("VHS-Studio {}", BUILD.short())));
-        assert!(r.contains("Some GPU (Vulkan)"));
-        assert!(r.contains("ffmpeg      not checked"));
+        assert!(!r.contains("ffmpeg"), "nothing unprobed is reported");
+        assert!(BUILD.report(Some("n8.1.2, bundled")).contains("ffmpeg      n8.1.2, bundled"));
         assert!(r.contains(BUILD.librashader));
         assert!(r.contains(REPOSITORY));
         assert!(r.trim_end().ends_with(ORIGIN), "the origin is credited");

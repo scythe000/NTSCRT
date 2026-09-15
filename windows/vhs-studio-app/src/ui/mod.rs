@@ -201,7 +201,7 @@ pub fn top_bar(app: &mut VhsStudioApp, root: &mut egui::Ui, rs: Option<&RenderSt
         ui.add_space(2.0);
     });
 
-    about_window::show(app, &ctx, rs);
+    about_window::show(app, &ctx);
     if ctx.input(|i: &egui::InputState| i.key_pressed(egui::Key::F1)) {
         app.about_open = !app.about_open;
     }
