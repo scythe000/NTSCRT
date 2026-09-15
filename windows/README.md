@@ -154,22 +154,30 @@ happening. Neither blocks the window: the previous picture stays up and
 every control keeps working until the new one is ready.
 
 **Presets** — save or load your entire configuration (downscale, NTSC, colour
-grade, shader and every shader parameter) as JSON, with the 25 bundled presets listed
-underneath, with a tick against the loaded one that clears as soon as you
-change anything it controls. Eight of them are keyframe-animated and play
-their animation; eight are colour looks built on the grade stage (*Black &
-white*, *Solarized*, *Inverted*, *Blade Runner*, *Max Headroom*, *Neon*,
-*Red highlight*, *Cyan highlight*). Loading a preset turns **Animate** on whatever
-the preset itself stores: these looks are built out of tape noise and
-tracking error, and frozen on one frame a preset shows you a still that
-happens to be noisy rather than the effect it is for. The format is the
-macOS build's, so presets move between the two. Loading a keyframed preset
-opens the timeline and starts it playing, as on macOS, so the animation is
-what you see rather than one frame of it. A preset is a clean slate: every
-setting it covers goes to the preset's value or, where the preset is
-silent, to the default — nothing from the previous preset or from your own
-tweaks carries over, and on a video the switch shows immediately rather
-than after the cached frames run out.
+grade, shader and every shader parameter) as JSON, with the 25 bundled presets
+listed underneath in three sections. **Looks** (*Clean CRT*, *Mild VHS*,
+*Obliterated*…) and **Animated** (the keyframed ones — *Glitch 1*, *Very wavy*…)
+are whole looks, one at a time, with a radio dot against the one on screen.
+**Colour** presets (*Black & white*, *Solarized*, *Inverted*, *Blade Runner*,
+*Max Headroom*, *Neon*, *Red highlight*, *Cyan highlight*) are only the Colour
+panel and *stack*: tick one and it lays over whatever look is loaded, switch
+the look underneath and it stays, tick it again to take it off. Any two whole
+looks can't stack — each is a complete snapshot, and the animated ones carry
+every value in every keyframe — which is why the menu draws the line where it
+does. **Save colour as…** writes your own stackable colour preset from the
+Colour panel. Marks clear as soon as you change something the preset controls.
+Loading a preset turns **Animate** on whatever the preset itself stores: these
+looks are built out of tape noise and tracking error, and frozen on one frame
+a preset shows you a still that happens to be noisy rather than the effect it
+is for. The format is the macOS build's, so presets move between the two (a
+colour preset carries the look it was built on, so older builds load it
+whole). Loading a keyframed preset opens the timeline and starts it playing,
+as on macOS, so the animation is what you see rather than one frame of it. A
+whole look is a clean slate: every setting it covers goes to the preset's
+value or, where the preset is silent, to the default — nothing from the
+previous preset or from your own tweaks carries over except a ticked colour,
+and on a video the switch shows immediately rather than after the cached
+frames run out.
 
 **Sidebar** — the creative pipeline, top to bottom in signal order
 (source → NTSC → downscale → colour grade → CRT shader → export):
@@ -367,7 +375,7 @@ On an RTX 3090 (Vulkan backend):
 - A HEIC still renders through ffmpeg 7.0 (320×240 in, 1280×960 out), an
   AVIF through ffmpeg 6.1, and ffmpeg 6.1 refuses the HEIC with a message
   naming the version it needs.
-- 176 tests pass (`cargo test --release`), no warnings.
+- 178 tests pass (`cargo test --release`), no warnings.
 
 On a Linux desktop (X11, Mesa's software Vulkan driver — a verification
 target, not a shipping one), driving the window with `xdotool` and reading

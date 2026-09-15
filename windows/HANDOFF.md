@@ -5,7 +5,7 @@ port is, what state it's in, the decisions that aren't obvious from the code,
 and the traps that will cost you an hour if nobody warns you.
 
 **Branch:** `windows-port` on `github.com/scythe000/NTSCRT` (a fork of
-`finnmckenty/NTSCRT`). 48 commits, ~13,000 lines of Rust/WGSL under `windows/`
+`finnmckenty/NTSCRT`). 51 commits, ~13,000 lines of Rust/WGSL under `windows/`
 plus the release workflow in `.github/`. Everything below is pushed.
 
 **Name.** The app is **VHS-Studio**. It started as "NTSCRT for Windows" and
@@ -104,11 +104,11 @@ counterpart in its header comment. Port *behaviour*, not frameworks.
 | Preset load is a clean slate, incl. on a playing video | ✅ on screen: Glitch 1 → Clean VHS mid-playback |
 | No VC++ Redistributable needed (crt-static) | ✅ CI check in `package.ps1` passes; `objdump -p` on the artifact shows no MSVCP140 / VCRUNTIME140 imports |
 | Colour-grade stage (`vhs-studio-core/src/grade.rs`, `gpu/grade.{rs,wgsl}`, `ui/grade_panel.rs`) | ✅ GPU pass matches the CPU reference within 0.5/255; panel driven on screen; keyframes and presets carry it |
-| Eight colour presets (B&W, Solarized, Inverted, Blade Runner, Max Headroom, Neon, Red/Cyan highlight) | ✅ smoke-rendered side by side and loaded in the GUI; a pre-grade preset loaded after one turns the stage off |
+| Eight colour presets (B&W, Solarized, Inverted, Blade Runner, Max Headroom, Neon, Red/Cyan highlight) | ✅ smoke-rendered side by side and loaded in the GUI; now stackable colour layers (checkboxes) over any look |
 | ffmpeg bundled beside the exe (pinned build, SHA-256 checked) | ✅ CI on `windows-latest`: digest ok, staged copy is the one resolved, ffmpeg 8.1.2 runs; 143 MB zip |
 | About box (version, commit, date, GPU, ffmpeg, libraries; Copy; F1) + version in the title + `vhs-studio-smoke --version` | ✅ on screen; report copied to the clipboard |
 
-**176 tests, zero warnings.** 62 in `vhs-studio-core`, 114 in `vhs-studio-app`.
+**178 tests, zero warnings.** 62 in `vhs-studio-core`, 116 in `vhs-studio-app`.
 
 ### Parity with the macOS app
 
@@ -166,8 +166,18 @@ from the workflow is the thing to run first.
 ### Known gaps
 
 - **Not run on Windows since the GUI pass** — see above.
-- **Zip only.** No installer, no code signing. SmartScreen will warn on an
-  unsigned download.
+- **Zip only, unsigned.** No installer. SmartScreen blocks the downloaded
+  exe ("Windows protected your PC") until the build has reputation, and a
+  new build has none. The workflow has a **Sign** step ready: add the
+  secrets `CODESIGN_PFX_BASE64` and `CODESIGN_PASSWORD` and it signs both
+  exes with signtool (SHA-256, RFC 3161 timestamp) before packaging; with
+  no secrets it does nothing. What is needed is the certificate: an OV
+  certificate (≈$200–400/yr) still has to earn reputation; an EV one, or
+  Azure Trusted Signing (≈$10/month, check current eligibility for
+  individuals), is trusted at once. Until then the README tells users
+  about *More info → Run anyway* and about unblocking the zip before
+  extracting (Properties → Unblock), which removes the mark-of-the-web
+  the extracted files would otherwise inherit.
 - **The bundled ffmpeg has been run on a Windows *runner*, not a desktop.**
   [Run 34984713862](https://github.com/scythe000/NTSCRT/actions/runs/34984713862)'s
   Package step downloaded it, matched the digest, and `vhs-studio-smoke --ffmpeg`
@@ -571,6 +581,40 @@ the bar follows the preset's `timeline.enabled`, forced open when keyed.
 `load_preset` sets `active_preset` *after* applying, because the edit hooks
 clear it.
 
+### Colour presets are a layer; everything else is a snapshot
+
+The owner asked for check marks so presets could be stacked. Two whole
+presets can't be: each is a complete snapshot of downscale, NTSC, shader
+and grade, and the animated ones carry all 78 values in every keyframe, so
+"A then B" is simply B. What *can* stack is a grade over a look, because
+the eight colour presets differ only in their `grade` section (they were
+all built on Mild VHS). So `AppPreset` gained an optional `layer` field —
+`"colour"` on those eight — and `bundled_classified()` files the bundled
+presets as `Look`, `Animated` (has keyframes) or `Colour`. The menu shows
+Looks and Animated as one radio group and Colour as checkboxes.
+
+Applying a colour preset (`apply_colour_preset`) copies only its grade and
+records it in `colour_layer: Option<(name, Grade)>`; the base tick stays.
+`apply_preset` (a whole look) keeps the layer's grade in place when the
+incoming preset carries no grade of its own — every bundled Look and
+Animated preset is like that — and drops it when the preset does say what
+its colour is. Editing a grade control by hand goes through `leave_grade`,
+which clears the colour tick if there is one and the base tick otherwise;
+edits elsewhere still clear only the base tick. Ticking the ticked colour
+calls `remove_colour_layer`, grade back to off. Keyframes are untouched by
+all this: the bundled animated presets' keys carry no grade values, so the
+evaluator leaves the grade alone and the colour rides over the animation
+(`grade_values` returns the empty map for keys without grade). The colour
+files still contain the whole look they were built on, so the Mac and older
+builds load them as before; `--preset` in the smoke tool is repeatable and
+stacks a colour preset the same way. **Save colour as…** writes the current
+state with `layer: colour`.
+
+Neon was re-dialled at the same time: the first version was a purple duotone
+at 0.45 that muddied everything and had the glow shader's strength at 0.1.
+It is now saturation 2, contrast 1.35, blacks crushed, a faint blue-violet
+in the shadows only, and (for whole-file loads) glow strength 0.7.
+
 ### The whole shader tree ships
 
 The seven `.slangp` files reference a few dozen `.slang` files, but those
@@ -770,8 +814,8 @@ is done. What's left, roughly in order of value:
 2. **Side-by-side with the macOS app.** The GUI was checked against the
    Swift *source*, not a running Mac. Someone with both should compare the
    timeline bar, the preview framing and the panel layout.
-3. **Code signing**, so SmartScreen stops warning. Needs a certificate;
-   the workflow would sign in the Package step.
+3. **Code signing**, so SmartScreen stops warning. The workflow's Sign
+   step is in place; it needs the certificate secrets (see Known gaps).
 4. **An installer** (MSIX or Inno Setup) with a Start-menu entry and file
    associations. The zip is deliberately the first cut — it needs nothing.
 5. **Undo.** Neither build has it. Presets are the current workaround.
