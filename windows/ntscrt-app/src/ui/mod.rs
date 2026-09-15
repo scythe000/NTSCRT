@@ -24,9 +24,7 @@ pub fn top_bar(app: &mut NtscrtApp, root: &mut egui::Ui, rs: Option<&RenderState
             if ui.button("Open\u{2026}").on_hover_text("Ctrl+O").clicked() {
                 pick_source(app);
             }
-            if ui.button("Export PNG\u{2026}").on_hover_text("Ctrl+E").clicked() {
-                pick_export(app);
-            }
+            export_control(app, ui);
 
             ui.separator();
             preset_menu(app, ui, rs);
@@ -109,6 +107,46 @@ pub fn top_bar(app: &mut NtscrtApp, root: &mut egui::Ui, rs: Option<&RenderState
     }
 
     let _ = rs;
+}
+
+/// The toolbar's Export button, which says what it will write, and — while
+/// a movie export runs — turns into its progress and a Cancel, so the export
+/// is visible with every panel closed, as the macOS toolbar does.
+fn export_control(app: &mut NtscrtApp, ui: &mut egui::Ui) {
+    if let Some(task) = &app.export_task {
+        let (done, total) = task.counts();
+        let cancelling = task.is_cancelling();
+        let text = if cancelling {
+            "Cancelling\u{2026}".to_string()
+        } else if total > 0 {
+            format!("Exporting {}%", (task.fraction() * 100.0).round() as u32)
+        } else {
+            "Exporting\u{2026}".to_string()
+        };
+        ui.add(
+            egui::ProgressBar::new(task.fraction())
+                .desired_width(150.0)
+                .desired_height(20.0)
+                .text(egui::RichText::new(text).small())
+                .animate(!cancelling),
+        )
+        .on_hover_text(format!("{done} / {total} frames"));
+        ui.add_enabled_ui(!cancelling, |ui| {
+            if ui.button("Cancel").on_hover_text("Stop the export and remove the partial file").clicked() {
+                app.cancel_export();
+            }
+        });
+        return;
+    }
+
+    let label = if app.exports_video() {
+        format!("Export {}\u{2026}", app.export_job.format.button_name())
+    } else {
+        "Export PNG\u{2026}".to_string()
+    };
+    if ui.button(label).on_hover_text("Ctrl+E").clicked() {
+        pick_export(app);
+    }
 }
 
 /// Preset menu: save/load the whole configuration, plus the bundled presets
@@ -230,11 +268,7 @@ fn pick_export(app: &mut NtscrtApp) {
         .set_file_name(format!("{stem}-ntscrt.{ext}"))
         .save_file()
     {
-        if video {
-            app.export_video(path);
-        } else {
-            app.export_png(path);
-        }
+        app.export_from_ui(path);
     }
 }
 
@@ -317,12 +351,18 @@ fn export_panel(app: &mut NtscrtApp, ui: &mut egui::Ui) {
             });
 
             let (cw, ch) = app.chain_input_size();
-            let (out_w, out_h) = if app.snap_to_scanline_grid {
+            let (mut out_w, mut out_h) = if app.snap_to_scanline_grid {
                 ntscrt_core::ScanlineGrid::snapped_size(cw, ch, app.export_height)
             } else {
                 let w = (app.export_height as f64 * cw as f64 / ch.max(1) as f64).round() as u32;
                 (w.max(1), app.export_height.max(1))
             };
+            // Movie encoders take even dimensions (see `video::export`), so
+            // show the size the file will actually have.
+            if app.exports_video() {
+                out_w &= !1;
+                out_h &= !1;
+            }
             ui.label(
                 egui::RichText::new(format!("\u{2192} {out_w}\u{00D7}{out_h}"))
                     .monospace()
@@ -544,24 +584,8 @@ fn movie_controls(app: &mut NtscrtApp, ui: &mut egui::Ui) {
 pub fn status_bar(app: &mut NtscrtApp, root: &mut egui::Ui) {
     egui::Panel::bottom("status").show(root, |ui| {
         ui.horizontal(|ui| {
-            // Progress is worth seeing even when the Export panel is shut.
-            if let Some(task) = &app.export_task {
-                let (done, total) = task.counts();
-                ui.add_sized(
-                    [140.0, 14.0],
-                    egui::ProgressBar::new(task.fraction()).show_percentage(),
-                );
-                ui.label(
-                    egui::RichText::new(if task.is_cancelling() {
-                        "cancelling".to_string()
-                    } else {
-                        format!("{done}/{total}")
-                    })
-                    .small()
-                    .weak(),
-                );
-                ui.separator();
-            }
+            // The toolbar carries export progress; this line says what is
+            // being written.
             if let Some(err) = &app.error {
                 ui.colored_label(egui::Color32::from_rgb(230, 100, 100), err);
             } else if let Some(status) = &app.status {

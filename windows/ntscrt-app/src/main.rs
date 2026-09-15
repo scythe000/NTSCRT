@@ -66,6 +66,10 @@ fn main() -> eframe::Result<()> {
         .nth(1)
         .or_else(|| std::env::var_os("NTSCRT_SOURCE"))
         .map(std::path::PathBuf::from);
+    // Dev hook: start exporting the loaded source to this path at launch, so
+    // the in-app export (progress, cancel, completion) can be exercised
+    // without a file dialog. The headless verifier covers the output itself.
+    let initial_export = std::env::var_os("NTSCRT_EXPORT").map(std::path::PathBuf::from);
 
     eframe::run_native(
         "NTSCRT",
@@ -74,6 +78,9 @@ fn main() -> eframe::Result<()> {
             let mut app = ntscrt_app::app::NtscrtApp::new(cc);
             if let Some(path) = initial_source {
                 app.load_source(path);
+            }
+            if let Some(path) = initial_export {
+                app.export_from_ui(path);
             }
             Ok(Box::new(app))
         }),

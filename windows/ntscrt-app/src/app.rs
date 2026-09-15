@@ -661,6 +661,16 @@ impl NtscrtApp {
         self.video.is_some() || self.export_still_frames.is_some()
     }
 
+    /// Write whatever the Export button says it will — a movie or a PNG —
+    /// to `dest`.
+    pub fn export_from_ui(&mut self, dest: PathBuf) {
+        if self.exports_video() {
+            self.export_video(dest);
+        } else {
+            self.export_png(dest);
+        }
+    }
+
     /// Start rendering the whole source and encoding it, on its own thread.
     ///
     /// Export is minutes of work at 4K and every frame goes through the CPU
