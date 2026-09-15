@@ -64,7 +64,7 @@ counterpart in its header comment. Port *behaviour*, not frameworks.
 | Export progress + cancel | ✅ in the toolbar; cancel leaves no partial file |
 | Audio on video export | ✅ AAC muxed, looped, cut to length; ffprobe-checked |
 | Preview zoom / pan / integer scale | ✅ pure `frame()` unit-tested + on screen |
-| Icon, DPI manifest, zip, release workflow | ✅ zip built and checked here; the workflow has not run yet |
+| Icon, DPI manifest, zip, release workflow | ✅ workflow green on `windows-latest`: 130 tests, icon embedded without warnings, 65.8 MB zip artifact |
 
 **130 tests, zero warnings.** 52 in `ntscrt-core`, 78 in `ntscrt-app`.
 
@@ -480,8 +480,9 @@ The original seven-item list (look at the GUI, cached-frame strip, timeline
 polish, toolbar export progress, zoom/pan/integer scale, audio, packaging)
 is done. What's left, roughly in order of value:
 
-1. **Run the zip on a Windows desktop.** Push the branch, take the workflow's
-   artifact, and check what Linux couldn't: the D3D12 backend, the file
+1. **Run the zip on a Windows desktop.** Take the artifact from the
+   [first green run](https://github.com/scythe000/NTSCRT/actions/runs/34926158311)
+   (or any later one) and check what Linux couldn't: the D3D12 backend, the file
    dialogs, DPI scaling on a HiDPI monitor, the embedded icon in Explorer and
    the taskbar, and the `.mov`/`.mp4` audio in a Windows player. Then tag
    `v0.1.0` and the workflow publishes the Release.
