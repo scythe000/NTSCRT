@@ -31,17 +31,18 @@ The **[full guide](windows/README.md)** covers every panel and control. In short
 
 VHS-Studio began as the Windows build of [**NTSCRT**](https://github.com/finnmckenty/NTSCRT), Finn McKenty's macOS app that first wired ntsc-rs and librashader together. It owes NTSCRT the pipeline, the house VHS look, the preset format, the keyframe model, the bundled presets and most of its design — and the two still share preset files. SwiftUI and Metal don't exist on Windows, so the app was rebuilt on [wgpu](https://wgpu.rs) and [egui](https://github.com/emilk/egui) in Rust; it then grew things the Mac app doesn't have (the colour-grade stage, bundled ffmpeg, an About box, and so on) and became its own program with its own name.
 
-The macOS NTSCRT app is still in this repository (`Sources/`, `Package.swift`), unchanged; its README is at [docs/README-macOS.md](docs/README-macOS.md), and the upstream project is [finnmckenty/NTSCRT](https://github.com/finnmckenty/NTSCRT).
+The macOS app itself lives upstream at [finnmckenty/NTSCRT](https://github.com/finnmckenty/NTSCRT); its Swift sources were removed from this repository once VHS-Studio no longer built against them (they are in this repository's history up to commit `105b74e` if ever needed).
 
 ## Repository layout
 
 | Path | What |
 |---|---|
-| [`windows/`](windows/) | **VHS-Studio** — the Rust workspace (`vhs-studio-core`, `vhs-studio-app`), presets, packaging script, [README](windows/README.md) and [HANDOFF](windows/HANDOFF.md) |
-| `Sources/`, `Package.swift`, `Tests/` | the original NTSCRT macOS app (Swift) |
-| `presets/` | the bundled app presets both apps load |
-| `Vendor/` | vendored dependencies, including the `slang-shaders` submodule the CRT shaders come from |
-| `docs/` | images and the [macOS README](docs/README-macOS.md) |
+| [`windows/`](windows/) | **VHS-Studio** — the Rust workspace (`vhs-studio-core`, `vhs-studio-app`), packaging script, [README](windows/README.md) and [HANDOFF](windows/HANDOFF.md) |
+| `presets/` | the 25 bundled presets (the format is NTSCRT's, so files move between the two apps) |
+| `Vendor/ntsc-rs`, `Vendor/slang-shaders` | git submodules: the signal-emulation crate the app builds against, and the RetroArch shader tree it ships |
+| `Assets/` | `icon-source.png`, from which `build.rs` generates the Windows icon |
+| `TestAssets/` | two small test frames for `vhs-studio-smoke` |
+| `docs/` | the README's header image |
 
 ## Building from source
 

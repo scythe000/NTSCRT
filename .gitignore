@@ -1,20 +1,8 @@
-.build/
-.swiftpm/
-Package.resolved
 .DS_Store
-*.xcodeproj
-xcuserdata/
-*.xcuserstate
+Thumbs.db
 
-# librashader dylib + headers are built locally per-machine, not checked in.
-Vendor/librashader/*.dylib
-Vendor/librashader/librashader.h
-Vendor/librashader/librashader_ld.h
+# Rust build output (the workspace is windows/)
+target/
 
-# Wrapped .app output (regenerable via scripts/wrap-app.sh)
-build/
-Vendor/ntscrs-capi/ntscrs_capi.dylib
-Vendor/ntscrs-capi/target/
+# Packaged releases (windows/package.ps1)
 dist/
-.build-x86/
-.build-tests/

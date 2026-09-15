@@ -22,7 +22,7 @@ app", that is NTSCRT. The icon is still NTSCRT's (`Assets/icon-source.png`)
 unchanged and still moves between the two apps. The repository's **root
 `README.md` is VHS-Studio's front page** (what GitHub renders for the
 branch), with `docs/vhs-studio-header.webp` as its picture; NTSCRT's own
-macOS README moved to `docs/README-macOS.md`, links fixed. The GitHub
+macOS app's own files are gone (see "The macOS sources are gone" below). The GitHub
 "About" sidebar is the repository *description* in Settings, not a file —
 it still reads as the macOS tool until the owner changes it.
 
@@ -53,8 +53,9 @@ source → rotate → NTSC/VHS degradation (full res, CPU) → downscale → col
 The colour grade is this build's own stage; everything else is the Mac's
 chain.
 
-The original, NTSCRT, is a **macOS SwiftUI/Metal app** in `Sources/`. This
-is a **Windows rewrite** in `windows/`, not a port of the Swift.
+The original, NTSCRT, is a **macOS SwiftUI/Metal app**
+([finnmckenty/NTSCRT](https://github.com/finnmckenty/NTSCRT)). This is a
+**Windows rewrite** in `windows/`, not a port of the Swift.
 
 **Why a rewrite:** the two libraries doing the image work are already
 cross-platform Rust, so they carry over untouched. The ~9,000 lines of Swift
@@ -69,9 +70,29 @@ libraries through an Objective-C bridge over a C ABI
 Swift. Here the host is Rust, so both are ordinary crate dependencies. No
 bridge, no dylib to ship, no header to keep in sync.
 
-**The Swift is still the reference.** When porting anything else, read the
-corresponding file in `Sources/` first. Every module here names its Swift
-counterpart in its header comment. Port *behaviour*, not frameworks.
+**The Swift is still the reference.** Every module here names its Swift
+counterpart in its header comment (`Sources/CrtCore/Pipeline.swift` and so
+on). Those paths are in the **upstream** repository now, not this one: the
+macOS sources, tests, scripts, `Package.swift`, the Objective-C bridge and
+`Vendor/ntscrs-capi` were removed once nothing here built against them
+(last present at commit `105b74e`). When porting anything else, read the
+upstream file first. Port *behaviour*, not frameworks.
+
+### The macOS sources are gone
+
+Removed, in one commit, as Mac-only: `Sources/`, `Tests/`, `Package.swift`,
+`scripts/` (the Mac build/release/wrap scripts), `Vendor/ntscrs-capi` (the
+C ABI the Swift called ntsc-rs through — Rust needs none), `Assets/AppIcon.icns`
+(`icon-source.png` stays; `build.rs` makes the `.ico` from it), `DEVELOPMENT.md`
+(Mac toolchain setup), NTSCRT's README and screenshots under `docs/`, a stray
+`NTSCRT july 27.webp`, and a `CertificateSigningRequest.certSigningRequest`
+that should never have been committed (a CSR carries no private key, but it
+is still in history). `.gitignore` is now the Rust/Windows one. What the
+Windows build depends on outside `windows/` and stayed: `presets/`, the two
+submodules, `Assets/icon-source.png`, `TestAssets/` (the smoke examples use
+them), `docs/vhs-studio-header.webp`, `.github/`. Verified after the removal
+by a clean clone → `cargo build --release` → `cargo test` → `package.ps1`
+on the Windows runner.
 
 ---
 

@@ -17,9 +17,9 @@ app that first wired these two libraries together, and it still owes it the
 pipeline, the house VHS look, the preset format, the keyframe model, the
 bundled presets and most of its design. It has since become its own program
 — a colour-grade stage, bundled ffmpeg and other things the Mac app doesn't
-have — so it has its own name. The macOS NTSCRT app lives in the rest of this
-repository (`Sources/`, [its README](../docs/README-macOS.md)); the Windows app is
-everything under `windows/`. As with NTSCRT: all the actual image magic
+have — so it has its own name. The macOS NTSCRT app lives upstream at
+[finnmckenty/NTSCRT](https://github.com/finnmckenty/NTSCRT); this repository
+is VHS-Studio, with the app under `windows/`. As with NTSCRT: all the actual image magic
 belongs to ntsc-rs and the RetroArch shader community.
 
 > **Picking this up?** [HANDOFF.md](HANDOFF.md) has the current state, the
@@ -37,8 +37,8 @@ but that gets you the language, not the frameworks.
 So the libraries are reused as-is and the shell is rebuilt on **wgpu** (D3D12
 or Vulkan) and **egui**. In one respect this is simpler than the original: the
 macOS build reaches both libraries through an Objective-C bridge over a C ABI
-(`Sources/CrtAppBridge`, `Vendor/ntscrs-capi`) because its host language is
-Swift. Here the host is Rust, so both are ordinary crate dependencies — no
+(its `Sources/CrtAppBridge` and `Vendor/ntscrs-capi`, upstream) because its
+host language is Swift. Here the host is Rust, so both are ordinary crate dependencies — no
 bridge, no dylib to ship, no header to keep in sync.
 
 What was ported rather than rewritten: the scanline-grid math
