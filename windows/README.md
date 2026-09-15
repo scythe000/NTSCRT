@@ -39,7 +39,9 @@ last are facts about the shaders, not about the platform.
 - Windows 10 1809 or later (the D3D12 backend needs render passes), x64
 - A GPU with D3D12 or Vulkan drivers
 - [ffmpeg](https://ffmpeg.org/download.html) on PATH for video — decoding,
-  playback and export all go through it. Stills need nothing extra.
+  playback and export all go through it. PNG/JPEG/BMP/TIFF/WebP stills need
+  nothing extra; HEIC and AVIF stills are decoded through ffmpeg too (HEIC
+  needs 7.1 or newer).
 
 Building additionally needs:
 
@@ -129,14 +131,29 @@ what you see rather than one frame of it.
 - **NTSC (TV)** — the analog signal stage: composite noise, chroma bleed, head
   switching, tracking noise, tape speed, edge wave, and about sixty more. These
   controls are generated from ntsc-rs's own settings schema, so they track the
-  library. Preset JSON is interchangeable with the
-  [ntsc-rs desktop app](https://github.com/ntsc-rs/ntsc-rs/releases) — the 17
-  presets in `presets/` load here.
-- **CRT** — the seven bundled RetroArch presets with their runtime parameters.
-  Grayed-out controls tell you which switch activates them; many CRT parameters
-  only apply when their feature (curvature, mask, geometry mode) is on.
-- **Export** — output height, with a scanline-grid warning when the result
-  would band. A loaded video exports as H.264, HEVC, ProRes 422 / 422 HQ or
+  library. The app opens on the same house VHS look as the macOS build (not
+  ntsc-rs's raw defaults) and **Reset** returns to it. **Copy preset** and
+  **Paste preset** move ntsc-rs preset JSON through the clipboard, so a look
+  from the [ntsc-rs desktop app](https://github.com/ntsc-rs/ntsc-rs/releases)
+  pastes straight in. Many settings sit inside collapsed groups (*VHS
+  emulation › Edge wave*, *Scale*, …) — a preset that only changes those
+  looks different in the preview without anything at the top of the panel
+  moving.
+- **CRT** — the seven bundled RetroArch presets with their runtime parameters,
+  in the order the shader author declared them, under the author's own section
+  headers. Each control is chosen from the parameter's declaration, as on the
+  Mac: named choices ("SPHERE / CYLINDER") are pickers, integer ranges are
+  steppers, unnamed 0/1s are checkboxes, the rest sliders, with any legend
+  ("1-6 APERT, 7-10 DOT…") as a caption. **Apply CRT shader** bypasses the
+  shader to show the signal stage on its own; **Reset** returns every
+  parameter to the shader's defaults (including the app's house tweaks to
+  the two Glow shaders). Switching shaders remembers each one's values.
+  Grayed-out controls tell you which switch activates them; many CRT
+  parameters only apply when their feature (curvature, mask, geometry mode)
+  is on.
+- **Export** — the output's long edge (the other side follows the source's
+  aspect, as on the Mac), with a scanline-grid warning when the result would
+  band. A loaded video exports as H.264, HEVC, ProRes 422 / 422 HQ or
   GIF; a still exports a PNG, or video if you tick **Export as video (VHS
   motion)** — the signal stage animates on its own, so a still can make a
   clip without a timeline. GIF gets its own width and rate and estimates the
@@ -153,7 +170,8 @@ what you see rather than one frame of it.
 whole effect chain: scrub the playhead, dial in a look, press **Keyframe**,
 move, dial in another. Everything keys together as one master keyframe, so
 parameters you don't change between keys hold still on their own. Click a
-diamond to jump to it, drag it to retime (it snaps to frames), right-click
+diamond to jump to it — and while the playhead sits on a key, any parameter
+you change rewrites that key in place, as in After Effects — drag it to retime (it snaps to frames), right-click
 it for easing or delete, or nudge the selected one with Left/Right (Shift for
 ten frames) and remove it with Delete. Each key's easing (linear, ease in,
 ease out, ease in-out, hold) is also in the chip underneath it. Keyframe
@@ -223,8 +241,11 @@ same for the bundled `presets/` JSON.
 
 ## Differences from the macOS build
 
-- **No HEIC.** The `image` crate covers PNG/JPEG/BMP/TIFF/WebP; HEIC has no
-  pure-Rust decoder. The macOS build gets it free from ImageIO.
+- **HEIC goes through ffmpeg.** The `image` crate covers PNG/JPEG/BMP/TIFF/
+  WebP and has no HEIC or AVIF decoder, so those stills are decoded as a
+  one-frame clip by the same ffmpeg video needs. HEIC demuxing arrived in
+  ffmpeg 7.1; an older ffmpeg fails with a message saying so. The macOS build
+  gets HEIC free from ImageIO.
 - **Not frame-identical to the Mac build.** The macOS build pins librashader to
   76462c03 because later versions shifted crt-royale's output; that pin is
   Metal-specific. This uses librashader 0.12 on its wgpu runtime, so
@@ -255,7 +276,10 @@ On an RTX 3090 (Vulkan backend):
 - Keyframes: 'Very wavy' sweeps `vhs_edge_wave` 0.5 -> 7.29 -> 0.5 across its
   48 frames (it was frozen at 1.64), and all 8 animated presets evaluate over
   real ranges. The animation bakes into exports frame by frame.
-- 133 tests pass (`cargo test --release`), no warnings.
+- A HEIC still renders through ffmpeg 7.0 (320×240 in, 1280×960 out), an
+  AVIF through ffmpeg 6.1, and ffmpeg 6.1 refuses the HEIC with a message
+  naming the version it needs.
+- 155 tests pass (`cargo test --release`), no warnings.
 
 On a Linux desktop (X11, Mesa's software Vulkan driver — a verification
 target, not a shipping one), driving the window with `xdotool` and reading
@@ -264,5 +288,11 @@ timeline bar were looked at and fixed where they were wrong. Keyframes add,
 drag with snap, retime past each other, nudge, delete and take easing from
 the chip and the context menu; the export button turns into a progress bar
 and back; zoom anchors on the cursor, pan clamps to the image and Compare's
-split still drags. It has not been run on a Windows desktop since these
-changes; the packaged zip is what the workflow builds there.
+split still drags. The CRT panel's headers, pickers, steppers and captions
+were checked against CRT Hyllian; the shader toggle shows the signal stage
+as hard blocks; NTSC Reset and clipboard Paste both put a dragged slider
+back; a parameter edited while parked on a keyframe survives jumping away
+and back. 'Wavy loop' and 'Very wavy' load with their edge-wave values in
+place (the settings they change live in collapsed groups). It has not been
+run on a Windows desktop since these changes; the packaged zip is what the
+workflow builds there.

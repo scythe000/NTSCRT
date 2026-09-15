@@ -5,12 +5,14 @@ port is, what state it's in, the decisions that aren't obvious from the code,
 and the traps that will cost you an hour if nobody warns you.
 
 **Branch:** `windows-port` on `github.com/scythe000/NTSCRT` (a fork of
-`finnmckenty/NTSCRT`). 27 commits, ~11,000 lines of Rust/WGSL under `windows/`
+`finnmckenty/NTSCRT`). 30 commits, ~12,000 lines of Rust/WGSL under `windows/`
 plus the release workflow in `.github/`. Everything below is pushed.
 
-The first 14 commits built the port headlessly. The rest were a second pass
-with a screen: the GUI was run on a Linux desktop, looked at, and fixed, and
-the remaining items of the original "where to go next" list (§7) were done.
+The first 14 commits built the port headlessly. The next batch was a second
+pass with a screen: the GUI was run on a Linux desktop, looked at, and fixed,
+and the original "where to go next" list was done. The latest pass closed the
+feature gaps against the macOS app found by reading its source side by side
+(§2, "Parity with the macOS app").
 
 ---
 
@@ -65,8 +67,52 @@ counterpart in its header comment. Port *behaviour*, not frameworks.
 | Audio on video export | ✅ copied when the container allows, else AAC; looped, cut to length; ffprobe-checked |
 | Preview zoom / pan / integer scale | ✅ pure `frame()` unit-tested + on screen |
 | Icon, DPI manifest, zip, release workflow | ✅ workflow green on `windows-latest`: 130 tests, icon embedded without warnings, 65.8 MB zip artifact |
+| CRT on/off, NTSC Reset, house defaults, per-shader saved params | ✅ on screen |
+| Shader parameter presentation (headers, pickers, steppers, captions) | ✅ on screen against CRT Hyllian |
+| Paste NTSC preset from the clipboard | ✅ on screen (copy → edit → paste restores) |
+| Export sized by long edge | ✅ `export_output_size` unit-tested + panel shows it |
+| HEIC / AVIF stills via ffmpeg | ✅ smoke-rendered with ffmpeg 7.0 (HEIC) and 6.1 (AVIF) |
+| Edits while parked on a keyframe rewrite that key | ✅ on screen |
 
-**133 tests, zero warnings.** 52 in `ntscrt-core`, 81 in `ntscrt-app`.
+**155 tests, zero warnings.** 54 in `ntscrt-core`, 101 in `ntscrt-app`.
+
+### Parity with the macOS app
+
+The Swift sources (`AppState.swift`, `ShaderPanel.swift`, `NtscPanel.swift`,
+`ExportPopover.swift`, the menus) were read against the Rust and every
+behavioural difference closed, except the ones listed under "Known gaps":
+
+- **House defaults.** The Mac never showed ntsc-rs's raw defaults: it
+  overlays `appNtscDefaults` (Finn's dialled-in VHS look) and
+  `appShaderDefaults` (BOOST/GLOW_ROLLOFF/BLOOM_STRENGTH on the two Glow
+  shaders). Windows was opening on the raw defaults, so the two apps looked
+  different out of the box. Now `NtscStage::house()` /
+  `HOUSE_DEFAULTS_JSON` in `ntscrt-core/src/ntsc.rs` and
+  `presets::HOUSE_SHADER_DEFAULTS` carry the same values; the app, the
+  headless renderer and Reset all use them. The default shader is
+  `glow_gauss`, as on the Mac (it was `royale`).
+- **CRT on/off** (`shader_enabled`), round-tripped in preset JSON under
+  `shader.enabled` — the field was already in the format, always `true`.
+- **NTSC Reset** → house look. **CRT Reset** → house-or-declared defaults.
+- **Per-shader saved parameters**: switching shaders stashes the outgoing
+  values and restores them on return (`saved_shader_params`).
+- **Auto-key while parked**: the Mac's `autoKeyIfParked`. Windows had the
+  "click a key, change something, it edits in place" model described in
+  `app_timeline.rs`'s header but never wired it — panel edits were discarded
+  by the next scrub. `auto_key_if_parked` is now called by the NTSC and CRT
+  panels after user edits (never by scrubbing or preset load).
+- **Parameter presentation**: `presentation()` in `ui/shader_panel.rs` is a
+  line-for-line port of `presentation(for:)`, with tests for each branch.
+- **Declaration order**: librashader 0.12 hands parameters back in hash
+  maps, so the panel was alphabetical and every header pseudo-param
+  (`h_nonono`…) sorted to the bottom, leaving empty sections.
+  `chain::declaration_order` walks the pass sources and their `#include`s
+  for `#pragma parameter` lines to recover the author's order.
+- **Paste preset** reads the clipboard with `arboard` (the Mac's
+  `NSPasteboard`); it used to open a file dialog.
+- **Export size** is the long edge, `export_output_size()` in `app.rs`.
+- **HEIC/AVIF** decode through ffmpeg as a one-frame clip
+  (`SourceImage::load_via_ffmpeg`); see the decision below.
 
 ### How the GUI was verified — and what that does and doesn't cover
 
@@ -90,8 +136,12 @@ from the workflow is the thing to run first.
   unsigned download.
 - **ffmpeg is not bundled.** The README tells the user to install it; the
   app reports clearly when it's missing.
-- **No HEIC.** The `image` crate covers PNG/JPEG/BMP/TIFF/WebP; HEIC has no
-  pure-Rust decoder. macOS gets it free from ImageIO.
+- **HEIC needs ffmpeg ≥ 7.1.** The `image` crate has no HEIC/AVIF decoder,
+  so those go through ffmpeg; HEIF demuxing landed in 7.1 (this VM's 6.1
+  fails with a message naming the version). Current Windows builds from
+  gyan.dev / BtbN are well past that.
+- **`** CRT-HYLLIAN **`-style headers with no parameters under them** show
+  as an empty collapsible section. The Mac does the same.
 - **Not frame-identical to the Mac build,** and can't be. macOS pins
   librashader to `76462c03` because later versions shifted crt-royale's
   output; that pin is Metal-specific. This uses librashader 0.12 on its wgpu
@@ -372,6 +422,34 @@ breaks the day a shader gains an include; the full tree is 65 MB of text
 that zips to well under half of that. `shaders/` beside the exe is the first
 place `presets::shaders_root` looks.
 
+### House defaults live in `ntscrt-core`, as data
+
+`AppState.appNtscDefaults` was reproduced as `HOUSE_DEFAULTS_JSON`, a
+partial ntsc-rs preset overlaid on the library defaults. ntsc-rs's own
+`from_json` fills *missing* keys from its **legacy** values, not its
+defaults, so the overlay is merged into a full default JSON first and that
+is loaded. A test asserts every house key names a real setting in the
+vendored ntsc-rs, because an unknown key is silently ignored and the look
+would drift from the Mac's without anyone noticing.
+
+### HEIC goes through ffmpeg, not a decoder crate
+
+No pure-Rust HEIC decoder exists; `libheif` bindings would add a C library
+to ship and to build in CI. ffmpeg is already a hard requirement for video
+and demuxes HEIF since 7.1, so a HEIC (or AVIF) still is opened as a
+one-frame `VideoSource` and `frame_at_index(0)` is the image. `image` is
+tried first; ffmpeg is used only for extensions `image` doesn't handle or
+when `image` reports `Unsupported`, so a broken PNG still reports `image`'s
+error, not an ffmpeg one.
+
+### Shader parameter order comes from the sources
+
+See "librashader 0.12" in §6. `declaration_order` walks each pass's `.slang`
+and its `#include`s in order, first occurrence wins, unreadable files are
+skipped (it only decides ordering; the loader reports real problems). The
+Hyllian test (`hyllian_headers_precede_their_sections`) runs against the real
+checkout and is skipped without one.
+
 ### The icon is generated, not committed
 
 `build.rs` renders `Assets/icon-source.png` (the macOS icon's source) to a
@@ -451,6 +529,9 @@ check whether the desktop took it before debugging the app.
   fallback. Check `adapter.features()` and pass the flag through.
 - To get parameter metadata you must go **preset → pack → chain**, not
   `load_from_path`. The `#pragma parameter` data only exists on the pack.
+- Parameter order is **lost**: `ShaderSource.parameters` and
+  `get_parameter_meta` are hash maps. If you need the author's order (the
+  panel's section headers do) read the sources — `chain::declaration_order`.
 
 ### Editing these files with Python heredocs
 
@@ -466,6 +547,14 @@ Most edits here were made with `python - <<'PYEOF'` scripts. Two real hazards:
 Also: a `sub()` helper that asserts before writing means **one failed match
 aborts the whole script and writes nothing** — check the output actually says
 it succeeded before assuming the edit landed.
+
+### Label rows must lay the controls out first
+
+`ui::label_row` exists because a truncating `Label` measures against the
+*whole* row if it is added before the right-aligned controls, and the
+controls then draw over its tail ("Internal Resolution Scale (downsa− li"
+was the symptom). Right-to-left: controls, then the label in the space left.
+`labelled_slider` and the CRT stepper both use it.
 
 ### Verify tests actually ran
 
@@ -501,8 +590,10 @@ is done. What's left, roughly in order of value:
 4. **An installer** (MSIX or Inno Setup) with a Start-menu entry and file
    associations. The zip is deliberately the first cut — it needs nothing.
 5. **Undo.** Neither build has it. Presets are the current workaround.
-6. **HEIC** needs a decoder; `libheif` bindings would bring a C dependency the
-   build currently avoids.
+6. **Chain cache.** The Mac keeps compiled chains per shader
+   (`chainCache`) so switching back is instant; Windows recompiles
+   (crt-royale takes a couple of seconds). Parameter values already survive
+   the switch, so this is purely time.
 
 ---
 
