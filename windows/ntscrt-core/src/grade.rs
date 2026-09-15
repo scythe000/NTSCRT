@@ -80,18 +80,12 @@ pub const GRADE_UNIFORM_LEN: usize = 20;
 /// The stage's settings: an on/off switch and a value per control. Missing
 /// values read as the control's default, so a preset or keyframe that
 /// predates a control still loads.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Grade {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default, rename = "params")]
     pub values: BTreeMap<String, f32>,
-}
-
-impl Default for Grade {
-    fn default() -> Self {
-        Self { enabled: false, values: BTreeMap::new() }
-    }
 }
 
 impl Grade {
@@ -342,7 +336,7 @@ mod tests {
         g.set("saturation", 9.0);
         assert_eq!(g.get("saturation"), 2.0);
         g.set("no_such_control", 1.0);
-        assert!(g.values.get("no_such_control").is_none());
+        assert!(!g.values.contains_key("no_such_control"));
         assert_eq!(g.get("gamma"), 1.0);
         assert_eq!(g.all_values().len(), GRADE_PARAMS.len());
     }

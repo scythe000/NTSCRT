@@ -398,10 +398,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let (path, source) = resolve_tool(var, name);
             println!("{name:8} {} ({})", path.display(), source.describe());
         }
-        match probe_tools() {
-            Ok(version) => println!("version  {version}"),
-            Err(e) => return Err(e.into()),
-        }
+        let version = probe_tools()?;
+        println!("version  {version}");
         return Ok(());
     }
     if args.first().is_some_and(|a| a == "--list-grade") {
