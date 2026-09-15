@@ -58,9 +58,24 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
 
+    // A path on the command line opens as the source: that is what Windows
+    // passes for "Open with" and for a file dropped onto the .exe, and it is
+    // the counterpart of the macOS `CRT_SOURCE` hook for headless-launch
+    // verification. `NTSCRT_SOURCE` does the same from the environment.
+    let initial_source = std::env::args_os()
+        .nth(1)
+        .or_else(|| std::env::var_os("NTSCRT_SOURCE"))
+        .map(std::path::PathBuf::from);
+
     eframe::run_native(
         "NTSCRT",
         options,
-        Box::new(|cc| Ok(Box::new(ntscrt_app::app::NtscrtApp::new(cc)))),
+        Box::new(move |cc| {
+            let mut app = ntscrt_app::app::NtscrtApp::new(cc);
+            if let Some(path) = initial_source {
+                app.load_source(path);
+            }
+            Ok(Box::new(app))
+        }),
     )
 }
