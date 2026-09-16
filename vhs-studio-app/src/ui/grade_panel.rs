@@ -69,9 +69,7 @@ fn controls(app: &mut VhsStudioApp, ui: &mut egui::Ui) {
     slider(ui, app, "invert", "Negative.", &mut changes);
 
     if !changes.is_empty() {
-        for (name, v) in changes {
-            app.set_grade_param(name, v);
-        }
+        app.set_grade_params(&changes);
         app.auto_key_if_parked();
     }
 }

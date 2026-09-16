@@ -445,7 +445,17 @@ impl VhsStudioApp {
     /// Set one colour-grade control. Cached video frames stay valid: the
     /// grade runs on the cached chain input, not before it.
     pub fn set_grade_param(&mut self, name: &str, value: f32) {
-        self.grade.set(name, value);
+        self.set_grade_params(&[(name, value)]);
+    }
+
+    /// Set several grade controls as one edit. A colour picker changes
+    /// three at once, and each has to count as the same edit: `leave_grade`
+    /// takes the stacked colour layer off on the first call and would clear
+    /// the base preset's tick on the second.
+    pub fn set_grade_params(&mut self, changes: &[(&str, f32)]) {
+        for (name, value) in changes {
+            self.grade.set(name, *value);
+        }
         self.leave_grade();
         self.mark_dirty();
     }
