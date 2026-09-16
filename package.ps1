@@ -16,6 +16,8 @@ looks for beside its executable (see vhs-studio-app/src/presets.rs):
         licenses/           FFmpeg's licence and where its source is
         README.md GUIDE.md  the front page and the full guide
 
+and a VHS-Studio-<version>-windows-x64.zip.sha256 beside the zip.
+
 The CRT shaders are not staged as files: build.rs packs the seven presets
 and everything they #include or sample (about 70 files of the submodule's
 5,000) into one compressed blob inside vhs-studio.exe, which unpacks it to
@@ -227,6 +229,12 @@ try {
     Compress-Archive -Path $stage -DestinationPath $zip -CompressionLevel Optimal
     $mb = [math]::Round((Get-Item $zip).Length / 1MB, 1)
     Write-Host "wrote $zip ($mb MB)" -ForegroundColor Green
+
+    # A digest beside the zip, in sha256sum's format, so a download can be
+    # checked against the Release page.
+    $digest = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+    "$digest  $stageName.zip`n" | Set-Content -NoNewline "$zip.sha256"
+    Write-Host "sha256 $digest"
 }
 finally {
     Pop-Location

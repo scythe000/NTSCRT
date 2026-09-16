@@ -40,6 +40,7 @@ The macOS app itself lives upstream at [finnmckenty/NTSCRT](https://github.com/f
 | `vhs-studio-core/`, `vhs-studio-app/` | **VHS-Studio** — the Rust workspace: the platform-neutral pipeline maths, and the wgpu/egui app with its headless verifier |
 | `package.ps1`, `ffmpeg-bundle.json` | the packaging script CI runs, and the pinned FFmpeg build it bundles |
 | [`HANDOFF.md`](HANDOFF.md) | the whole story of the code, for whoever works on it next |
+| [`CHANGELOG.md`](CHANGELOG.md) | release notes; each version's section becomes its GitHub Release |
 | `presets/` | the 26 bundled presets (the format is NTSCRT's, so files move between the two apps) |
 | `Vendor/ntsc-rs`, `Vendor/slang-shaders` | git submodules: the signal-emulation crate the app builds against, and the RetroArch shader tree from which `build.rs` packs the seven CRT presets into the executable |
 | `Assets/` | `icon-source.png`, from which `build.rs` generates the Windows icon |

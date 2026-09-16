@@ -39,7 +39,7 @@ pub const ORIGIN: &str = "https://github.com/finnmckenty/NTSCRT";
 pub const ORIGIN_NAME: &str = "NTSCRT by Finn McKenty";
 
 impl BuildInfo {
-    /// `0.1.0 (6518ac9, 2026-09-15)` — the one line to quote in a bug report.
+    /// `1.0.0 (6518ac9, 2026-09-15)` — the one line to quote in a bug report.
     pub fn short(&self) -> String {
         format!("{} ({}, {})", self.version, self.commit, self.date)
     }

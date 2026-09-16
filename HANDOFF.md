@@ -651,6 +651,20 @@ at 0.45 that muddied everything and had the glow shader's strength at 0.1.
 It is now saturation 2, contrast 1.35, blacks crushed, a faint blue-violet
 in the shadows only, and (for whole-file loads) glow strength 0.7.
 
+### Releasing: CHANGELOG section + version bump + tag
+
+A `vX.Y.Z` tag makes the workflow publish a GitHub Release with the zip and
+its `.sha256`. The release notes are the `## X.Y.Z` section of
+`CHANGELOG.md` (the "Release notes" step extracts it and fails if the tag
+doesn't match the Cargo version or the section is missing), not the
+auto-generated commit list. So a release is: add the section, bump
+`version` in `Cargo.toml` **and** `vhs-studio-core/Cargo.toml` (the core
+crate doesn't inherit the workspace version), commit, wait for the branch
+run to go green, then `git tag -a vX.Y.Z && git push origin vX.Y.Z`.
+VHS-Studio's numbering starts at **1.0.0** because the repository already
+carries NTSCRT's tags `v0.1.0`…`v0.11.0` from the fork — a `v0.1.0` for
+this app would have collided with the Mac app's first release.
+
 ### Three bundled presets have an enabled timeline and no keyframes — on purpose
 
 "Gentle waves loop", "Wavy loop" and "Obliterated" carry
@@ -905,8 +919,9 @@ is done. What's left, roughly in order of value:
    [first green run](https://github.com/scythe000/NTSCRT/actions/runs/34926158311)
    (or any later one) and check what Linux couldn't: the D3D12 backend, the file
    dialogs, DPI scaling on a HiDPI monitor, the embedded icon in Explorer and
-   the taskbar, and the `.mov`/`.mp4` audio in a Windows player. Then tag
-   `v0.1.0` and the workflow publishes the Release.
+   the taskbar, and the `.mov`/`.mp4` audio in a Windows player. The
+   first Release, `v1.0.0`, was tagged before this happened — the owner had
+   been running the artifacts on Windows throughout, and asked for it.
 2. **Side-by-side with the macOS app.** The GUI was checked against the
    Swift *source*, not a running Mac. Someone with both should compare the
    timeline bar, the preview framing and the panel layout.

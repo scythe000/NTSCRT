@@ -1,6 +1,6 @@
 [package]
 name = "vhs-studio-core"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 description = "Platform-neutral VHS-Studio pipeline: ntsc-rs signal stage, downscale specs, scanline grid math, colour grade, timeline"
 license = "MIT OR ISC OR Apache-2.0"
