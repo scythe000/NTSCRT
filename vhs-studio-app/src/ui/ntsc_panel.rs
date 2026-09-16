@@ -32,6 +32,7 @@ pub fn show(app: &mut VhsStudioApp, ui: &mut egui::Ui) {
                         Ok(json) => {
                             ui.ctx().copy_text(json);
                             app.status = Some("Copied ntsc-rs preset JSON".to_string());
+                            app.error = None;
                         }
                         Err(e) => app.error = Some(format!("{e}")),
                     }
@@ -193,6 +194,7 @@ fn paste_preset(app: &mut VhsStudioApp) {
     match result {
         Ok(()) => {
             app.status = Some("Pasted ntsc-rs preset".to_string());
+            app.error = None;
             app.mark_chain_input_edited();
             app.auto_key_if_parked();
         }

@@ -60,7 +60,10 @@ pub fn show(app: &mut VhsStudioApp, ctx: &egui::Context) {
                     .clicked()
                 {
                     match arboard::Clipboard::new().and_then(|mut c| c.set_text(BUILD.report(None))) {
-                        Ok(()) => app.status = Some("Build details copied".into()),
+                        Ok(()) => {
+                            app.status = Some("Build details copied".into());
+                            app.error = None;
+                        }
                         Err(e) => app.error = Some(format!("Could not copy: {e}")),
                     }
                 }
