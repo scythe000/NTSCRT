@@ -111,7 +111,10 @@ fn run_playback(
     let info = renderer.adapter_info();
     println!("adapter: {} ({:?})", info.name, info.backend);
 
-    let mut sequence = renderer.begin_sequence(settings, video.size())?;
+    // The producer rotates frames before the pipeline, so the sequence and
+    // the cache stamp are sized for the rotated clip, as the export path is.
+    let (sw, sh) = settings.rotation.output_size(video.info.width, video.info.height);
+    let mut sequence = renderer.begin_sequence(settings, (sw, sh))?;
     println!(
         "output:  {}x{}",
         sequence.output_size.0, sequence.output_size.1
@@ -123,14 +126,9 @@ fn run_playback(
     let mut cache: ChainInputCache<wgpu::Texture> = ChainInputCache::new();
     let stamp = Stamp {
         generation: GENERATION,
-        downscale: settings.downscale_width.map(|w| {
-            vhs_studio_core::DownscaleSpec::for_width(
-                w,
-                video.info.width,
-                video.info.height,
-                settings.downscale_method,
-            )
-        }),
+        downscale: settings
+            .downscale_width
+            .map(|w| vhs_studio_core::DownscaleSpec::for_width(w, sw, sh, settings.downscale_method)),
     };
 
     let config = Config::new(
