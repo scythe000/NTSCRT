@@ -251,11 +251,11 @@ pub fn export(
     ffmpeg::probe_tools()?;
 
     // Decide the frame supply: a clip's own frames, or a still repeated.
-    let (video, source_size, frame_count, fps) = match still_frames {
+    let (video, still, source_size, frame_count, fps) = match still_frames {
         Some((frames, fps)) => {
             let img = crate::image_io::SourceImage::load(source)?;
             let size = settings.rotation.output_size(img.width, img.height);
-            (None, size, frames, fps)
+            (None, Some(img), size, frames, fps)
         }
         None => {
             let v = VideoSource::open(source)?;
@@ -263,7 +263,7 @@ pub fn export(
             let size = settings.rotation.output_size(rw, rh);
             let n = v.info.total_frames as u32;
             let fps = v.info.frame_rate;
-            (Some(v), size, n, fps)
+            (Some(v), None, size, n, fps)
         }
     };
     if frame_count == 0 {
@@ -325,11 +325,6 @@ pub fn export(
     let mut written = 0u32;
     let mut cancelled = false;
     let mut reader = video.as_ref().map(|v| v.sequential_reader(0)).transpose()?;
-    let still = if video.is_none() {
-        Some(crate::image_io::SourceImage::load(source)?)
-    } else {
-        None
-    };
 
     'outer: for _ in 0..loops {
         // Each loop pass rewinds the decoder; the still path has nothing to
