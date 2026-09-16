@@ -223,6 +223,21 @@ try {
             }
             Write-Host "   $name.exe: no VC++ Redistributable imports"
         }
+
+        # Say plainly whether this zip will trip SmartScreen. The workflow
+        # signs before packaging when the repository has signing secrets;
+        # a local build is almost always unsigned, which is fine for testing.
+        Write-Host '== signature ==' -ForegroundColor Cyan
+        foreach ($name in 'vhs-studio', 'vhs-studio-smoke') {
+            $sig = Get-AuthenticodeSignature (Join-Path $stage "$name.exe")
+            if ($sig.Status -eq 'Valid') {
+                Write-Host "   $name.exe: signed by $($sig.SignerCertificate.Subject)"
+            } elseif ($sig.Status -eq 'NotSigned') {
+                Write-Host "   $name.exe: unsigned (SmartScreen will warn on first run)" -ForegroundColor Yellow
+            } else {
+                throw "$name.exe has a signature that does not verify: $($sig.Status) - $($sig.StatusMessage)"
+            }
+        }
     }
 
     Write-Host "== zipping $zip ==" -ForegroundColor Cyan

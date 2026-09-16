@@ -16,7 +16,7 @@ Grab `VHS-Studio-<version>-windows-x64.zip` from [**Releases**](../../releases/l
 
 **Requirements:** Windows 10 or 11, 64-bit, with a GPU that supports Direct3D 12 or Vulkan (anything from the last decade).
 
-> **"Windows protected your PC".** The download isn't code-signed yet, so SmartScreen shows this the first time you run it. Click **More info → Run anyway**; it asks once per build. To avoid it altogether, right-click the zip before extracting → **Properties** → tick **Unblock** → OK: that removes the "downloaded from the internet" mark that SmartScreen keys on, and the extracted files inherit the cleared state. (Extracting with 7-Zip has the same effect.) A signed build is on the list — see the note in [`HANDOFF.md`](HANDOFF.md).
+> **"Windows protected your PC".** The download isn't code-signed yet, so SmartScreen shows this the first time you run it. Click **More info → Run anyway**; it asks once per build. To avoid it altogether, right-click the zip before extracting → **Properties** → tick **Unblock** → OK: that removes the "downloaded from the internet" mark that SmartScreen keys on, and the extracted files inherit the cleared state. (Extracting with 7-Zip has the same effect.) Signed builds are wired up and waiting on a signing account — see *Code signing* in [`HANDOFF.md`](HANDOFF.md).
 
 The **[full guide](docs/GUIDE.md)** covers every panel and control. In short:
 

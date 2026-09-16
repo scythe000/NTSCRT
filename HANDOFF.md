@@ -203,17 +203,14 @@ from the workflow is the thing to run first.
 
 - **Not run on Windows since the GUI pass** — see above.
 - **Zip only, unsigned.** No installer. SmartScreen blocks the downloaded
-  exe ("Windows protected your PC") until the build has reputation, and a
-  new build has none. The workflow has a **Sign** step ready: add the
-  secrets `CODESIGN_PFX_BASE64` and `CODESIGN_PASSWORD` and it signs both
-  exes with signtool (SHA-256, RFC 3161 timestamp) before packaging; with
-  no secrets it does nothing. What is needed is the certificate: an OV
-  certificate (≈$200–400/yr) still has to earn reputation; an EV one, or
-  Azure Trusted Signing (≈$10/month, check current eligibility for
-  individuals), is trusted at once. Until then the README tells users
-  about *More info → Run anyway* and about unblocking the zip before
-  extracting (Properties → Unblock), which removes the mark-of-the-web
-  the extracted files would otherwise inherit.
+  exe ("Windows protected your PC") until that file has reputation, and
+  every new build starts from none. This is not fixable in code — it needs
+  a signing identity, and the workflow is wired for two (see *Code signing*
+  below); until the secrets exist the Sign steps skip and `package.ps1`
+  prints "unsigned". Meanwhile the README tells users about *More info →
+  Run anyway* and about unblocking the zip before extracting (Properties →
+  Unblock), which removes the mark-of-the-web the extracted files would
+  otherwise inherit.
 - **The bundled ffmpeg has been run on a Windows *runner*, not a desktop.**
   [Run 34984713862](https://github.com/scythe000/VHS-Studio/actions/runs/34984713862)'s
   Package step downloaded it, matched the digest, and `vhs-studio-smoke --ffmpeg`
@@ -668,6 +665,69 @@ VHS-Studio's numbering starts at **1.0.0** because the repository already
 carries NTSCRT's tags `v0.1.0`…`v0.11.0` from the fork — a `v0.1.0` for
 this app would have collided with the Mac app's first release.
 
+### Code signing: what SmartScreen wants, and the two wired-up ways to give it
+
+SmartScreen's "Windows protected your PC" is a *reputation* check, not a
+malware verdict. Reputation attaches to two things: the exact file hash,
+and the signer's identity. An unsigned exe has only the hash, so every
+release starts from zero and warns until enough people have downloaded
+and run that very file; there is nothing in the code, the manifest, the
+version resource or the zip that changes this. A signature gives the
+second handle: once one signed release has earned reputation, the next
+release signed by the same identity inherits it. (Microsoft stopped
+promising *instant* trust even for EV certificates; in practice a
+consistently-signed publisher stops warning within a release or two, and
+the 1.0.0 case — every build a stranger — goes away.)
+
+The workflow has both realistic routes, each dormant until its secrets
+exist (`Settings → Secrets and variables → Actions`), and a *Check
+signatures* step that fails the build if signing was configured but the
+exe doesn't verify. `package.ps1` prints the signer (or "unsigned") so
+the zip's state is in the log.
+
+**Path A, Azure Artifact Signing** (renamed from *Trusted Signing* in 2025;
+the GitHub action is `azure/artifact-signing-action@v2`). Microsoft's
+managed service: the key never leaves Azure, CI signs over HTTPS, and it
+is the cheapest legitimate signature there is — the Basic tier is
+$9.99/month for 5,000 signatures, which needs a paid (pay-as-you-go)
+Azure subscription, not a free/trial one. Identity validation is by
+Microsoft and takes a few business days; it is open to organisations in
+the US, Canada, EU and UK, and to **individuals in the US and Canada
+only** (check the current list on the *Code signing options* page of
+Microsoft Learn before starting). Setup, once the account is validated:
+
+1. In the Azure portal create an *Artifact Signing account* (note its
+   region: the endpoint URL is `https://<region>.codesigning.azure.net/`,
+   e.g. `eus` for East US, `wus2`, `neu`, `weu`) and a *Public Trust*
+   certificate profile in it. The profile's CN is the validated name;
+   that is what Windows shows as the publisher.
+2. Create an App Registration (Entra ID → App registrations), add a client
+   secret, and give the app the **Artifact Signing Certificate Profile
+   Signer** role on the signing account (IAM on the account).
+3. Add the six secrets: `ARTIFACT_SIGNING_ENDPOINT` (the URL from step 1),
+   `ARTIFACT_SIGNING_ACCOUNT`, `ARTIFACT_SIGNING_PROFILE`,
+   `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` (the *application* ID, not the
+   object ID), `AZURE_CLIENT_SECRET`. The endpoint secret is the switch:
+   set, the step runs.
+
+**Path B, a certificate file** (`CODESIGN_PFX_BASE64` +
+`CODESIGN_PASSWORD`, signed with signtool). Kept for an OV/EV certificate
+whose private key can be exported to a `.pfx`. Since June 2023 the CA/B
+Forum requires new OV keys to live on hardware (a USB token or the CA's
+cloud HSM), so a freshly bought certificate from Sectigo/DigiCert/SSL.com
+will *not* give you a .pfx — those vendors' cloud-signing CLIs would be a
+third path — which is why Path A is the one to take for this project.
+Path A wins if both are configured.
+
+**Two things that help without a certificate.** Submitting the released
+exe to Microsoft as a software developer
+(<https://www.microsoft.com/en-us/wdsi/filesubmission>, "Software
+developer" → "Incorrectly detected / SmartScreen") gets that hash reviewed
+and typically clears it within a day or two, per release. And the README's
+advice — *Unblock* the zip before extracting — sidesteps the check
+locally, because SmartScreen only inspects files carrying the
+mark-of-the-web.
+
 ### Three bundled presets have an enabled timeline and no keyframes — on purpose
 
 "Gentle waves loop", "Wavy loop" and "Obliterated" carry
@@ -928,8 +988,10 @@ is done. What's left, roughly in order of value:
 2. **Side-by-side with the macOS app.** The GUI was checked against the
    Swift *source*, not a running Mac. Someone with both should compare the
    timeline bar, the preview framing and the panel layout.
-3. **Code signing**, so SmartScreen stops warning. The workflow's Sign
-   step is in place; it needs the certificate secrets (see Known gaps).
+3. **Code signing**, so SmartScreen stops warning. The workflow signs
+   through Azure Artifact Signing or a certificate file the moment the
+   secrets exist; the account is the missing piece (see *Code signing* in
+   §5 for the setup, and the eligibility caveat).
 4. **An installer** (MSIX or Inno Setup) with a Start-menu entry and file
    associations. The zip is deliberately the first cut — it needs nothing.
 5. **Undo.** Neither build has it. Presets are the current workaround.

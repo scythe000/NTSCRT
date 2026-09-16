@@ -24,10 +24,11 @@ jobs:
     permissions:
       # Only the release step writes, and only on a tag.
       contents: write
-    # Job-level so the Sign step's `if` can see them: a step's own `env` is
+    # Job-level so the Sign steps' `if` can see them: a step's own `env` is
     # not in scope for its own condition, and the secrets context is not
     # allowed in a step `if` at all. Empty when the secrets are not set.
     env:
+      ARTIFACT_SIGNING_ENDPOINT: ${{ secrets.ARTIFACT_SIGNING_ENDPOINT }}
       CODESIGN_PFX_BASE64: ${{ secrets.CODESIGN_PFX_BASE64 }}
       CODESIGN_PASSWORD: ${{ secrets.CODESIGN_PASSWORD }}
     steps:
@@ -47,15 +48,48 @@ jobs:
       - name: Test
         run: cargo test --release
 
-      # Authenticode signing, when the repository has a certificate. Without
-      # a signature SmartScreen blocks the downloaded exe until it has built
-      # up reputation, and every new build starts that over. Add two secrets
-      # to turn this on: CODESIGN_PFX_BASE64 (the .pfx, base64-encoded) and
-      # CODESIGN_PASSWORD. Nothing here runs when they are absent. signtool
-      # comes with the Windows SDK on the runner; the RFC 3161 timestamp keeps
-      # the signature valid after the certificate expires.
-      - name: Sign
-        if: env.CODESIGN_PFX_BASE64 != ''
+      # Authenticode signing. Without a signature SmartScreen blocks the
+      # downloaded exe ("Windows protected your PC") until that exact file
+      # has built up download reputation, and every new build starts over;
+      # signed with one consistent identity, reputation carries from release
+      # to release. Nothing here runs until the repository has one of the two
+      # sets of secrets below (HANDOFF.md, "Code signing" says how to get
+      # them); with neither, the zip ships unsigned and the README warns.
+      #
+      # Path A — Azure Artifact Signing (the former Trusted Signing). Microsoft's
+      # managed service, ~$10/month, no certificate file to keep: the key lives
+      # in Azure and the action signs over HTTPS with an App Registration.
+      # Secrets: ARTIFACT_SIGNING_ENDPOINT (the region URL, e.g.
+      # https://eus.codesigning.azure.net/), ARTIFACT_SIGNING_ACCOUNT,
+      # ARTIFACT_SIGNING_PROFILE, AZURE_TENANT_ID, AZURE_CLIENT_ID,
+      # AZURE_CLIENT_SECRET.
+      - name: Sign (Azure Artifact Signing)
+        if: env.ARTIFACT_SIGNING_ENDPOINT != ''
+        uses: azure/artifact-signing-action@v2
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.ARTIFACT_SIGNING_PROFILE }}
+          files: |
+            ${{ github.workspace }}\target\release\vhs-studio.exe
+            ${{ github.workspace }}\target\release\vhs-studio-smoke.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: VHS-Studio
+          description-url: https://github.com/scythe000/VHS-Studio
+
+      # Path B — a certificate file, for an OV/EV certificate whose key may be
+      # exported (older ones; since mid-2023 CAs issue new ones on hardware
+      # tokens, where this path cannot reach). Secrets: CODESIGN_PFX_BASE64
+      # (the .pfx, base64-encoded) and CODESIGN_PASSWORD. signtool comes with
+      # the Windows SDK on the runner; the RFC 3161 timestamp keeps the
+      # signature valid after the certificate expires.
+      - name: Sign (certificate file)
+        if: env.ARTIFACT_SIGNING_ENDPOINT == '' && env.CODESIGN_PFX_BASE64 != ''
         shell: pwsh
         run: |
           $pfx = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
@@ -67,10 +101,23 @@ jobs:
             & $signtool.FullName sign /f $pfx /p $env:CODESIGN_PASSWORD /fd SHA256 `
               /tr http://timestamp.digicert.com /td SHA256 /d 'VHS-Studio' "target\release\$exe"
             if ($LASTEXITCODE -ne 0) { throw "signing $exe failed" }
-            & $signtool.FullName verify /pa /v "target\release\$exe"
-            if ($LASTEXITCODE -ne 0) { throw "verifying $exe failed" }
           }
           Remove-Item $pfx
+
+      # Whichever path ran, the build fails rather than ship an unsigned exe
+      # while signing is configured: /pa checks the chain to a trusted root
+      # and the timestamp, the way Windows will at install time.
+      - name: Check signatures
+        if: env.ARTIFACT_SIGNING_ENDPOINT != '' || env.CODESIGN_PFX_BASE64 != ''
+        shell: pwsh
+        run: |
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signtool) { throw 'signtool.exe not found on the runner' }
+          foreach ($exe in 'vhs-studio.exe', 'vhs-studio-smoke.exe') {
+            & $signtool.FullName verify /pa /v "target\release\$exe"
+            if ($LASTEXITCODE -ne 0) { throw "$exe is not validly signed" }
+          }
 
       - name: Package
         # The build is already done; the script stages target/release, checks
