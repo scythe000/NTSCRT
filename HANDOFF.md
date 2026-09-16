@@ -117,7 +117,7 @@ artifact paths in the workflow (`dist/*.zip`).
 | Video decode / playback / frame cache | ✅ verified 24.2fps, 0 drops |
 | MP4 / HEVC / ProRes 422 / ProRes 422 HQ / GIF export | ✅ verified with ffprobe |
 | Rotation (90/180/270) | ✅ verified stills + video + export |
-| App presets (load/save, 25 bundled) | ✅ all parse, format compatible |
+| App presets (load/save, 26 bundled) | ✅ all parse, format compatible |
 | Keyframe timeline + interpolation | ✅ verified numerically |
 | Timeline bar UI | ✅ looked at and driven on a Linux desktop (see below) |
 | Keyframes animating during video playback / scrub | ✅ verified on screen |
@@ -136,7 +136,7 @@ artifact paths in the workflow (`dist/*.zip`).
 | Preset load is a clean slate, incl. on a playing video | ✅ on screen: Glitch 1 → Clean VHS mid-playback |
 | No VC++ Redistributable needed (crt-static) | ✅ CI check in `package.ps1` passes; `objdump -p` on the artifact shows no MSVCP140 / VCRUNTIME140 imports |
 | Colour-grade stage (`vhs-studio-core/src/grade.rs`, `gpu/grade.{rs,wgsl}`, `ui/grade_panel.rs`) | ✅ GPU pass matches the CPU reference within 0.5/255; panel driven on screen; keyframes and presets carry it |
-| Eight colour presets (B&W, Solarized, Inverted, Blade Runner, Max Headroom, Neon, Red/Cyan highlight) | ✅ smoke-rendered side by side and loaded in the GUI; now stackable colour layers (checkboxes) over any look |
+| Eight colour presets (B&W, Solarized, Inverted, Blade Runner (screen), Max Headroom, Neon, Red/Cyan highlight) + the Blade Runner (film) look | ✅ smoke-rendered side by side and loaded in the GUI; now stackable colour layers (checkboxes) over any look |
 | ffmpeg bundled beside the exe (pinned build, SHA-256 checked) | ✅ CI on `windows-latest`: digest ok, staged copy is the one resolved, ffmpeg 8.1.2 runs; 143 MB zip |
 | About box (version, commit, date, libraries; Copy; F1) + version in the title + `vhs-studio-smoke --version` (adds ffmpeg) | ✅ on screen; report copied to the clipboard |
 | Shaders embedded as one pack (70 files / 0.7 MB in the exe, replacing a 4,963-file `shaders/`) | ✅ all seven render byte-identically from the pack and from the full tree; unpack 5 ms once; `package.ps1` asserts the staged exe uses it; [CI run](https://github.com/scythe000/NTSCRT/actions/runs/35033655482) on `windows-latest` green from a clean clone, zip 143 → 96 MB |
@@ -650,6 +650,20 @@ Neon was re-dialled at the same time: the first version was a purple duotone
 at 0.45 that muddied everything and had the glow shader's strength at 0.1.
 It is now saturation 2, contrast 1.35, blacks crushed, a faint blue-violet
 in the shadows only, and (for whole-file loads) glow strength 0.7.
+
+### Three bundled presets have an enabled timeline and no keyframes — on purpose
+
+"Gentle waves loop", "Wavy loop" and "Obliterated" carry
+`timeline.enabled: true` with `keys: []`. They came from NTSCRT that way
+(commit `99eef89`, "Bundle seven more presets") and upstream still has them
+so; nothing was lost in the port. On the Mac, as here, an enabled timeline
+with no keys is the *length* of a video exported from a still — 2 s at 24
+fps, 5 s at 12 for Obliterated — with the motion coming from the tape noise
+alone (the Mac's export popover calls this "Video from this image (VHS
+motion)"; the export panel here has the same checkbox). "Loop" in the name
+is that clip. The empty bar used to say "press Keyframe to set one", which
+made them read as broken; it now says what the timeline is doing. Don't add
+keyframes to them.
 
 ### The shaders are one pack inside the executable
 

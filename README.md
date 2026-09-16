@@ -21,7 +21,7 @@ Grab `VHS-Studio-<version>-windows-x64.zip` from [**Releases**](../../releases/l
 The **[full guide](docs/GUIDE.md)** covers every panel and control. In short:
 
 - **Open** (Ctrl+O) an image (PNG, JPEG, WebP, HEIC, AVIF…) or a video (MP4, MOV, MKV…), or drop one on the window.
-- **Presets** — 25 bundled looks from *Clean CRT* to *Obliterated*, including eight colour looks (*Black & white*, *Solarized*, *Inverted*, *Blade Runner*, *Max Headroom*, *Neon*, two colour highlights) and eight that animate. Save your own as JSON.
+- **Presets** — 26 bundled looks from *Clean CRT* to *Obliterated*, including eight stackable colour looks (*Black & white*, *Solarized*, *Inverted*, *Blade Runner (screen)*, *Max Headroom*, *Neon*, two colour highlights), a *Blade Runner (film)* look that imitates the movie itself on a worn tape, and eight that animate. Save your own as JSON.
 - **Sidebar** — the pipeline in signal order: Source, Downscale, NTSC (TV) with ntsc-rs's sixty-odd settings, Colour, and CRT with seven RetroArch presets and every runtime parameter.
 - **Timeline** — keyframe the entire chain (After Effects-style master keyframes, easing per key) and render the animation; on a video the keyframes pin to moments in the clip.
 - **Export** (Ctrl+E) — PNG for stills; H.264/HEVC MP4, ProRes MOV (audio comes along) or GIF for video, at your size and quality, with progress and Cancel. Exports are deterministic.
@@ -40,7 +40,7 @@ The macOS app itself lives upstream at [finnmckenty/NTSCRT](https://github.com/f
 | `vhs-studio-core/`, `vhs-studio-app/` | **VHS-Studio** — the Rust workspace: the platform-neutral pipeline maths, and the wgpu/egui app with its headless verifier |
 | `package.ps1`, `ffmpeg-bundle.json` | the packaging script CI runs, and the pinned FFmpeg build it bundles |
 | [`HANDOFF.md`](HANDOFF.md) | the whole story of the code, for whoever works on it next |
-| `presets/` | the 25 bundled presets (the format is NTSCRT's, so files move between the two apps) |
+| `presets/` | the 26 bundled presets (the format is NTSCRT's, so files move between the two apps) |
 | `Vendor/ntsc-rs`, `Vendor/slang-shaders` | git submodules: the signal-emulation crate the app builds against, and the RetroArch shader tree from which `build.rs` packs the seven CRT presets into the executable |
 | `Assets/` | `icon-source.png`, from which `build.rs` generates the Windows icon |
 | `TestAssets/` | two small test frames for `vhs-studio-smoke` |

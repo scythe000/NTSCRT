@@ -155,11 +155,11 @@ happening. Neither blocks the window: the previous picture stays up and
 every control keeps working until the new one is ready.
 
 **Presets** — save or load your entire configuration (downscale, NTSC, colour
-grade, shader and every shader parameter) as JSON, with the 25 bundled presets
+grade, shader and every shader parameter) as JSON, with the 26 bundled presets
 listed underneath in three sections. **Looks** (*Clean CRT*, *Mild VHS*,
 *Obliterated*…) and **Animated** (the keyframed ones — *Glitch 1*, *Very wavy*…)
 are whole looks, one at a time, with a radio dot against the one on screen.
-**Colour** presets (*Black & white*, *Solarized*, *Inverted*, *Blade Runner*,
+**Colour** presets (*Black & white*, *Solarized*, *Inverted*, *Blade Runner (screen)*,
 *Max Headroom*, *Neon*, *Red highlight*, *Cyan highlight*) are only the Colour
 panel and *stack*: tick one and it lays over whatever look is loaded, switch
 the look underneath and it stays, tick it again to take it off. Any two whole
@@ -205,7 +205,7 @@ frames run out.
 - **Colour** — a grade on the degraded, downscaled picture before the CRT
   draws it: saturation (0 is black and white), contrast, brightness, gamma
   and hue shift; a **Tint** that pulls shadows and highlights toward two
-  colours of your choosing (teal and amber for the Blade Runner look);
+  colours of your choosing (teal and amber for the Blade Runner (screen) look);
   **Colour highlight**, which keeps one colour and greys everything else
   (pick the colour, set how wide a band around it counts); and **Solarize**
   and **Invert**. Every control keyframes like the rest, so a picture can
@@ -361,11 +361,15 @@ On an RTX 3090 (Vulkan backend):
 
 - All seven bundled CRT presets render.
 - All six downscale kernels produce distinct, correct output.
-- All 25 bundled app presets parse and render; "Clean CRT" and "Obliterated"
+- All 26 bundled app presets parse and render; "Clean CRT" and "Obliterated"
   produce the crisp and destroyed looks their names promise. The eight colour
   looks were rendered side by side on a night-city test frame: black and
   white is grey, inverted is a negative, the two highlights keep only their
-  colour, Blade Runner is teal and amber.
+  colour, Blade Runner (screen) is teal and amber. Blade Runner (film) was
+  dialled against a frame of the film and a screenshot of it off a worn tape:
+  a whole look (soft, low noise, 10 px of chroma delay for the red/cyan
+  fringes, glow) with a grade that lifts and blows the highlights to pale
+  cyan, keeps the reds and pulls the shadows blue-violet.
 - The grade's GPU pass matches its CPU reference (`grade_pixel`) within
   0.5/255 across invert, a mixed grade (hue shift, saturation, contrast,
   gamma, tint, solarize) and the colour highlight.
@@ -405,7 +409,7 @@ place (the settings they change live in collapsed groups), and 'Very wavy'
 plays its loop in real time — the readout advances 0.5 s per 0.5 s of wall
 clock, flat at its end keys and clearly wavier than 'Gentle waves loop'
 through the middle. The Colour panel enables, drags saturation to 0 and the
-preview goes black and white through the CRT shader; loading 'Blade Runner'
+preview goes black and white through the CRT shader; loading 'Blade Runner (screen)'
 tints the preview and fills the panel with its values, and loading 'Clean
 CRT' after it turns the grade off and returns every control to neutral.
 The About box opens from the button and from F1 with no delay (it is all
