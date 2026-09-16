@@ -2,7 +2,7 @@
 //! build description the About box shows, and the shader pack.
 //!
 //! The shader pack is the part of the slang-shaders submodule the seven CRT
-//! presets actually use — about a hundred files of five thousand — packed
+//! presets actually use — seventy files of five thousand — packed
 //! into one compressed blob (`shader_pack.rs`, shared with the crate through
 //! `#[path]`) that the app embeds. A checkout without the submodule builds
 //! an empty pack and the app falls back to looking for a tree on disk.

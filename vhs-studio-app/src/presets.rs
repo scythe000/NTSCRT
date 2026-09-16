@@ -332,6 +332,6 @@ mod tests {
     #[test]
     fn walk_up_gives_up_on_a_missing_directory() {
         let start = std::env::temp_dir();
-        assert!(walk_up_for(&start, Path::new("definitely-not-here-ntscrt")).is_none());
+        assert!(walk_up_for(&start, Path::new("definitely-not-here-vhs-studio")).is_none());
     }
 }

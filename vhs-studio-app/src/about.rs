@@ -44,9 +44,6 @@ impl BuildInfo {
         format!("{} ({}, {})", self.version, self.commit, self.date)
     }
 
-    /// The whole box as text, for the Copy button and `vhs-studio-smoke
-    /// --version`. `gpu` and `ffmpeg` are whatever the caller could find
-    /// out; None prints as not checked.
     /// The report as text, for the clipboard and `vhs-studio-smoke
     /// --version`. Everything in it is known at compile time except
     /// `ffmpeg`, which the caller may have probed; the About box passes

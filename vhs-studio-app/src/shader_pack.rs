@@ -2,8 +2,8 @@
 //! one compressed blob embedded in the executable.
 //!
 //! The slang-shaders submodule is ~5,000 files / 77 MB, of which the app uses
-//! about a hundred. Shipping the whole tree beside the exe was the safe
-//! choice while nothing computed which hundred; this module computes it.
+//! seventy. Shipping the whole tree beside the exe was the safe
+//! choice while nothing computed which seventy; this module computes it.
 //! `build.rs` walks the presets (`#reference`, `shaderN =`, the `textures`
 //! list) and their sources (`#include`, recursively), packs the files it
 //! finds into a single deflate stream, and the app embeds that with
