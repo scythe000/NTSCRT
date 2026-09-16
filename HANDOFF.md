@@ -141,7 +141,7 @@ artifact paths in the workflow (`dist/*.zip`).
 | About box (version, commit, date, libraries; Copy; F1) + version in the title + `vhs-studio-smoke --version` (adds ffmpeg) | ✅ on screen; report copied to the clipboard |
 | Shaders embedded as one pack (70 files / 0.7 MB in the exe, replacing a 4,963-file `shaders/`) | ✅ all seven render byte-identically from the pack and from the full tree; unpack 5 ms once; `package.ps1` asserts the staged exe uses it; [CI run](https://github.com/scythe000/NTSCRT/actions/runs/35033655482) on `windows-latest` green from a clean clone, zip 143 → 96 MB |
 
-**185 tests, zero warnings.** 62 in `vhs-studio-core`, 123 in `vhs-studio-app`.
+**188 tests, zero warnings.** 62 in `vhs-studio-core`, 126 in `vhs-studio-app`.
 
 ### Parity with the macOS app
 
