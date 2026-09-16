@@ -19,13 +19,53 @@ const BAR_HEIGHT: f32 = 3.0;
 const BAR_INSET: f32 = 8.0;
 
 pub fn show(app: &mut VhsStudioApp, root: &mut egui::Ui) {
-    // On a video the timeline replaces the transport, as on macOS — it has
-    // the same play button and scrubber, plus the keyframes.
-    if app.video.is_none() || app.timeline_open {
+    if app.video.is_none() {
         return;
     }
     let ctx = root.ctx().clone();
 
+    // On a video the timeline replaces the transport, as on macOS — it has
+    // the same play button and scrubber, plus the keyframes. The arrow keys
+    // below still step frames then: the timeline bar only takes them over
+    // while a keyframe is parked under the playhead.
+    if !app.timeline_open {
+        panel(app, root);
+    }
+
+    // Arrow keys step a frame at a time, which is the other half of "frame
+    // accurate": a drag gets you close, these put you exactly where you want.
+    // Not while a text field has focus (they move its caret), and not while
+    // the timeline has a keyframe parked — there they nudge the key.
+    if ctx.memory(|m| m.focused().is_some()) || app.timeline_owns_arrows() {
+        return;
+    }
+    // Counted per event, so key repeat and several presses in one slow
+    // frame each step a frame; Shift steps ten.
+    let mut steps: i64 = 0;
+    ctx.input(|i: &egui::InputState| {
+        for e in &i.events {
+            if let egui::Event::Key { key, pressed: true, modifiers, .. } = e {
+                let n = if modifiers.shift { 10 } else { 1 };
+                match key {
+                    egui::Key::ArrowLeft => steps -= n,
+                    egui::Key::ArrowRight => steps += n,
+                    _ => {}
+                }
+            }
+        }
+    });
+    if steps != 0 {
+        if let Some(video) = app.video.as_ref() {
+            let total = video.total_frames() as i64;
+            let current = video.current_frame_index as i64;
+            let next = (current + steps).rem_euclid(total) as usize;
+            app.stop_playback();
+            app.seek_to_frame(next);
+        }
+    }
+}
+
+fn panel(app: &mut VhsStudioApp, root: &mut egui::Ui) {
     egui::Panel::bottom("transport").show(root, |ui| {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
@@ -103,38 +143,6 @@ pub fn show(app: &mut VhsStudioApp, root: &mut egui::Ui) {
         });
         ui.add_space(4.0);
     });
-
-    // Arrow keys step a frame at a time, which is the other half of "frame
-    // accurate": a drag gets you close, these put you exactly where you want.
-    // Not while a text field has focus (they move its caret), and not while
-    // the timeline has a keyframe parked — there they nudge the key.
-    if ctx.memory(|m| m.focused().is_some()) || app.timeline_owns_arrows() {
-        return;
-    }
-    // Counted per event, so key repeat and several presses in one slow
-    // frame each step a frame; Shift steps ten.
-    let mut steps: i64 = 0;
-    ctx.input(|i: &egui::InputState| {
-        for e in &i.events {
-            if let egui::Event::Key { key, pressed: true, modifiers, .. } = e {
-                let n = if modifiers.shift { 10 } else { 1 };
-                match key {
-                    egui::Key::ArrowLeft => steps -= n,
-                    egui::Key::ArrowRight => steps += n,
-                    _ => {}
-                }
-            }
-        }
-    });
-    if steps != 0 {
-        if let Some(video) = app.video.as_ref() {
-            let total = video.total_frames() as i64;
-            let current = video.current_frame_index as i64;
-            let next = (current + steps).rem_euclid(total) as usize;
-            app.stop_playback();
-            app.seek_to_frame(next);
-        }
-    }
 }
 
 /// Draw the cached runs as a strip under the scrubber — the After Effects
