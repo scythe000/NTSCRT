@@ -33,7 +33,7 @@ pub const BUILD: BuildInfo = BuildInfo {
     egui: env!("VHS_STUDIO_DEP_EGUI"),
 };
 
-pub const REPOSITORY: &str = "https://github.com/scythe000/NTSCRT";
+pub const REPOSITORY: &str = "https://github.com/scythe000/VHS-Studio";
 /// The macOS app this grew out of. Credit where the pipeline came from.
 pub const ORIGIN: &str = "https://github.com/finnmckenty/NTSCRT";
 pub const ORIGIN_NAME: &str = "NTSCRT by Finn McKenty";

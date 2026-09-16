@@ -4,10 +4,13 @@ Written for whoever picks this up next, human or model. It covers what the
 port is, what state it's in, the decisions that aren't obvious from the code,
 and the traps that will cost you an hour if nobody warns you.
 
-**Branch:** `windows-port` on `github.com/scythe000/NTSCRT` (a fork of
-`finnmckenty/NTSCRT`). 53 commits, ~13,000 lines of Rust/WGSL at the
-repository root plus the release workflow in `.github/`. Everything below is
-pushed.
+**Branch:** `main` on `github.com/scythe000/VHS-Studio`. The repository
+began as a fork of `finnmckenty/NTSCRT` (the macOS app) and the work was
+done on a `windows-port` branch; `main` was fast-forwarded to it at the
+1.0.0 release, the repository renamed from `NTSCRT` to `VHS-Studio`, and
+the fork relationship dropped (GitHub redirects the old name). ~13,000
+lines of Rust/WGSL at the repository root plus the release workflow in
+`.github/`. Everything below is pushed.
 
 **Name.** The app is **VHS-Studio**. It started as "NTSCRT for Windows" and
 was renamed once it had grown features the macOS app doesn't have (the
@@ -139,7 +142,7 @@ artifact paths in the workflow (`dist/*.zip`).
 | Eight colour presets (B&W, Solarized, Inverted, Blade Runner (screen), Max Headroom, Neon, Red/Cyan highlight) + the Blade Runner (film) look | ✅ smoke-rendered side by side and loaded in the GUI; now stackable colour layers (checkboxes) over any look |
 | ffmpeg bundled beside the exe (pinned build, SHA-256 checked) | ✅ CI on `windows-latest`: digest ok, staged copy is the one resolved, ffmpeg 8.1.2 runs; 143 MB zip |
 | About box (version, commit, date, libraries; Copy; F1) + version in the title + `vhs-studio-smoke --version` (adds ffmpeg) | ✅ on screen; report copied to the clipboard |
-| Shaders embedded as one pack (70 files / 0.7 MB in the exe, replacing a 4,963-file `shaders/`) | ✅ all seven render byte-identically from the pack and from the full tree; unpack 5 ms once; `package.ps1` asserts the staged exe uses it; [CI run](https://github.com/scythe000/NTSCRT/actions/runs/35033655482) on `windows-latest` green from a clean clone, zip 143 → 96 MB |
+| Shaders embedded as one pack (70 files / 0.7 MB in the exe, replacing a 4,963-file `shaders/`) | ✅ all seven render byte-identically from the pack and from the full tree; unpack 5 ms once; `package.ps1` asserts the staged exe uses it; [CI run](https://github.com/scythe000/VHS-Studio/actions/runs/35033655482) on `windows-latest` green from a clean clone, zip 143 → 96 MB |
 
 **188 tests, zero warnings.** 62 in `vhs-studio-core`, 126 in `vhs-studio-app`.
 
@@ -212,7 +215,7 @@ from the workflow is the thing to run first.
   extracting (Properties → Unblock), which removes the mark-of-the-web
   the extracted files would otherwise inherit.
 - **The bundled ffmpeg has been run on a Windows *runner*, not a desktop.**
-  [Run 34984713862](https://github.com/scythe000/NTSCRT/actions/runs/34984713862)'s
+  [Run 34984713862](https://github.com/scythe000/VHS-Studio/actions/runs/34984713862)'s
   Package step downloaded it, matched the digest, and `vhs-studio-smoke --ffmpeg`
   from the staged folder reported both tools "bundled beside the app" with
   `ffmpeg version n8.1.2-52-g5a03dfa0f6` — so the shared DLLs load. A real
@@ -916,7 +919,7 @@ polish, toolbar export progress, zoom/pan/integer scale, audio, packaging)
 is done. What's left, roughly in order of value:
 
 1. **Run the zip on a Windows desktop.** Take the artifact from the
-   [first green run](https://github.com/scythe000/NTSCRT/actions/runs/34926158311)
+   [first green run](https://github.com/scythe000/VHS-Studio/actions/runs/34926158311)
    (or any later one) and check what Linux couldn't: the D3D12 backend, the file
    dialogs, DPI scaling on a HiDPI monitor, the embedded icon in Explorer and
    the taskbar, and the `.mov`/`.mp4` audio in a Windows player. The

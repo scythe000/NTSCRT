@@ -50,8 +50,8 @@ The macOS app itself lives upstream at [finnmckenty/NTSCRT](https://github.com/f
 ## Building from source
 
 ```powershell
-git clone --recurse-submodules https://github.com/scythe000/NTSCRT
-cd NTSCRT
+git clone --recurse-submodules https://github.com/scythe000/VHS-Studio
+cd VHS-Studio
 cargo build --release
 .\target\release\vhs-studio.exe
 ```

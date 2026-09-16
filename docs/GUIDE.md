@@ -67,7 +67,7 @@ Building additionally needs:
 ## Install
 
 Download `VHS-Studio-<version>-windows-x64.zip` from the
-[releases](https://github.com/scythe000/NTSCRT/releases), unzip it anywhere,
+[releases](https://github.com/scythe000/VHS-Studio/releases), unzip it anywhere,
 run `vhs-studio.exe`. The folder is self-contained: `presets/`,
 `ffmpeg.exe`/`ffprobe.exe` and their DLLs sit beside the executable, and the
 CRT shaders are inside `vhs-studio.exe` itself (unpacked to your user cache
