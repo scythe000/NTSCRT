@@ -94,7 +94,7 @@ fn beside_executable(name: &str) -> Option<PathBuf> {
 /// this rather than letting a spawn failure surface as "file not found".
 pub fn probe_tools() -> Result<String, String> {
     let version = |path: PathBuf, name: &str| -> Result<String, String> {
-        let out = Command::new(&path)
+        let out = command(&path)
             .arg("-version")
             .stdin(Stdio::null())
             .output()
@@ -121,6 +121,21 @@ pub fn probe_tools() -> Result<String, String> {
     Ok(reported)
 }
 
+/// A `Command` for one of the tools, with the platform flags every launch
+/// needs. On Windows that is CREATE_NO_WINDOW: the GUI build is a
+/// windows-subsystem binary, and without it every spawn — including the
+/// `-version` probe when a video is opened — flashes a console.
+fn command(program: &PathBuf) -> Command {
+    #[allow(unused_mut)]
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    cmd
+}
+
 /// A running ffmpeg, with its stderr drained in the background.
 ///
 /// The drain thread matters: ffmpeg writes to stderr unprompted, and a full
@@ -141,18 +156,11 @@ impl Process {
         capture_stdout: bool,
         capture_stdin: bool,
     ) -> Result<Self, String> {
-        let mut cmd = Command::new(program);
+        let mut cmd = command(program);
         cmd.args(args)
             .stdin(if capture_stdin { Stdio::piped() } else { Stdio::null() })
             .stdout(if capture_stdout { Stdio::piped() } else { Stdio::null() })
             .stderr(Stdio::piped());
-        #[cfg(windows)]
-        {
-            // CREATE_NO_WINDOW: the GUI build is a windows-subsystem binary,
-            // and without this every spawn flashes a console.
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x0800_0000);
-        }
         let mut child = cmd.spawn().map_err(|e| {
             format!(
                 "could not run {} ({e}). Install ffmpeg and put it on PATH, \
