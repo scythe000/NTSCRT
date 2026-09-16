@@ -24,6 +24,12 @@ jobs:
     permissions:
       # Only the release step writes, and only on a tag.
       contents: write
+    # Job-level so the Sign step's `if` can see them: a step's own `env` is
+    # not in scope for its own condition, and the secrets context is not
+    # allowed in a step `if` at all. Empty when the secrets are not set.
+    env:
+      CODESIGN_PFX_BASE64: ${{ secrets.CODESIGN_PFX_BASE64 }}
+      CODESIGN_PASSWORD: ${{ secrets.CODESIGN_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,9 +57,6 @@ jobs:
       - name: Sign
         if: env.CODESIGN_PFX_BASE64 != ''
         shell: pwsh
-        env:
-          CODESIGN_PFX_BASE64: ${{ secrets.CODESIGN_PFX_BASE64 }}
-          CODESIGN_PASSWORD: ${{ secrets.CODESIGN_PASSWORD }}
         run: |
           $pfx = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
           [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CODESIGN_PFX_BASE64))
