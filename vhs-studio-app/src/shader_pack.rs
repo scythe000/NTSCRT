@@ -262,8 +262,11 @@ pub fn content_id(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
 
-    fn tree(files: &[(&str, &str)]) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("vhs-studio-pack-{}-{}", std::process::id(), files.len()));
+    /// A scratch tree under the temp dir. `name` keeps parallel tests
+    /// apart: two tests with the same file count would otherwise share a
+    /// directory and one's clean-up could remove the other's files mid-run.
+    fn tree(name: &str, files: &[(&str, &str)]) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("vhs-studio-pack-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         for (name, text) in files {
             let p = dir.join(name);
@@ -275,7 +278,7 @@ mod tests {
 
     #[test]
     fn closure_follows_passes_includes_textures_and_references() {
-        let root = tree(&[
+        let root = tree("closure", &[
             ("crt/a.slangp", "#reference \"../base/b.slangp\"\nshaders = 1\nshader0 = \"shaders/a.slang\"\nfilter_linear0 = true\n"),
             ("crt/shaders/a.slang", "#version 450\n#include \"../../include/common.inc\"\n// #include \"not/this.inc\"\n"),
             ("include/common.inc", "#include \"./deeper.inc\"\n"),
@@ -307,7 +310,7 @@ mod tests {
 
     #[test]
     fn a_missing_include_is_an_error_naming_the_file() {
-        let root = tree(&[
+        let root = tree("missing-include", &[
             ("crt/a.slangp", "shader0 = a.slang\n"),
             ("crt/a.slang", "#include \"gone.inc\"\n"),
         ]);
@@ -318,7 +321,7 @@ mod tests {
 
     #[test]
     fn paths_may_not_leave_the_root() {
-        let root = tree(&[("crt/a.slangp", "shader0 = ../../a.slang\n")]);
+        let root = tree("escape", &[("crt/a.slangp", "shader0 = ../../a.slang\n")]);
         let err = closure(&root, &["crt/a.slangp"]).unwrap_err();
         assert!(err.contains("leaves the shader root"), "{err}");
         let _ = std::fs::remove_dir_all(&root);
@@ -326,7 +329,7 @@ mod tests {
 
     #[test]
     fn pack_round_trips_and_is_content_addressed() {
-        let root = tree(&[("crt/a.slangp", "shader0 = a.slang\n"), ("crt/a.slang", "void main(){}\n")]);
+        let root = tree("round-trip", &[("crt/a.slangp", "shader0 = a.slang\n"), ("crt/a.slang", "void main(){}\n")]);
         let files = closure(&root, &["crt/a.slangp"]).unwrap();
         let bytes = pack(&root, &files).unwrap();
         assert!(bytes.starts_with(MAGIC));
