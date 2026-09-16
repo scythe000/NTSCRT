@@ -638,6 +638,17 @@ impl VhsStudioApp {
 }
 
 impl eframe::App for VhsStudioApp {
+    /// Closing the window mid-export. The worker owns ffmpeg and the partial
+    /// file; asking it to cancel and waiting for it lets it tear both down,
+    /// where the process exiting would only kill ffmpeg and leave a
+    /// truncated file behind. It stops at the next frame boundary.
+    fn on_exit(&mut self) {
+        if let Some(task) = self.export_task.take() {
+            task.cancel.store(true, Ordering::Relaxed);
+            let _ = task.handle.join();
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
 

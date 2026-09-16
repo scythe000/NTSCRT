@@ -197,6 +197,7 @@ pub fn ntsc_interp_table() -> BTreeMap<String, NtscInterp> {
 
 /// Evaluates a timeline at any point. Built once, then read-only, so it can
 /// be handed to an export thread.
+#[derive(Debug, Clone)]
 pub struct TimelineEvaluator {
     keys: Vec<Keyframe>,
     shader_meta: BTreeMap<String, ShaderMeta>,
@@ -308,6 +309,14 @@ impl TimelineEvaluator {
             };
             out.insert(name.clone(), value);
         }
+        // A setting only the later key knows (keys saved by different
+        // ntsc-rs versions) holds that key's value through the segment
+        // rather than appearing at the key.
+        for (name, raw_b) in &b.ntsc {
+            if !out.contains_key(name) {
+                out.insert(name.clone(), raw_b.clone());
+            }
+        }
         out
     }
 
@@ -385,6 +394,17 @@ mod tests {
         // Keys written before the stage existed carry no grade at all.
         let ev = evaluator(vec![key(0.0, Easing::Linear, 0.0, 0.0), key(1.0, Easing::Linear, 0.0, 0.0)]);
         assert!(ev.grade_values(0.5).is_empty());
+    }
+
+    #[test]
+    fn a_setting_only_the_later_key_has_holds_through_the_segment() {
+        let a = key(0.0, Easing::Linear, 0.0, 0.0);
+        let mut b = key(1.0, Easing::Linear, 1.0, 0.0);
+        b.ntsc.insert("snow_intensity".into(), serde_json::json!(0.25));
+        let ev = evaluator(vec![a, b]);
+        let mid = ev.ntsc_values(0.5);
+        assert_eq!(mid["snow_intensity"], serde_json::json!(0.25));
+        assert!((mid["vhs_edge_wave"].as_f64().unwrap() - 0.5).abs() < 1e-9);
     }
 
     // ---- easing ----

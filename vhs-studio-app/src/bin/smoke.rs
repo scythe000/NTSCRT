@@ -115,6 +115,8 @@ fn run_playback(
     // the cache stamp are sized for the rotated clip, as the export path is.
     let (sw, sh) = settings.rotation.output_size(video.info.width, video.info.height);
     let mut sequence = renderer.begin_sequence(settings, (sw, sh))?;
+    // A clip's keyframes span the clip, as in the app and --export.
+    sequence.set_timeline_frames(video.info.total_frames as u32);
     println!(
         "output:  {}x{}",
         sequence.output_size.0, sequence.output_size.1
@@ -138,6 +140,12 @@ fn run_playback(
         settings.rotation,
     );
     config.set_cache_probe(Some(cache.probe()));
+    // The producer bakes the animation's NTSC settings into each frame, as
+    // the app's does; the shader and grade halves follow in encode_frame.
+    config.set_per_frame_json(sequence.per_frame_ntsc_json());
+    if sequence.is_animated() {
+        println!("timeline: animated over the clip's {} frames", video.info.total_frames);
+    }
     let pipeline = PlaybackPipeline::start(
         video.clone(),
         0,

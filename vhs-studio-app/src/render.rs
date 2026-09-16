@@ -96,6 +96,16 @@ impl FrameSequence {
         self.evaluator.is_some()
     }
 
+    /// What a playback producer needs to bake the animation into the frames
+    /// it processes: clip frame `i` gets the ntsc-rs settings at
+    /// `timeline_position(i, timeline_frames)`, the mapping `encode_frame`
+    /// uses for the shader and grade. None when nothing animates.
+    pub fn per_frame_ntsc_json(&self) -> Option<crate::video::playback::PerFrameJson> {
+        let ev = self.evaluator.clone()?;
+        let total = self.timeline_frames;
+        Some(std::sync::Arc::new(move |frame: usize| Some(ev.ntsc_json(timeline_position(frame, total)))))
+    }
+
     /// Frames the animation spans. 0 when there is none.
     pub fn timeline_frames(&self) -> u32 {
         if self.evaluator.is_some() { self.timeline_frames } else { 0 }

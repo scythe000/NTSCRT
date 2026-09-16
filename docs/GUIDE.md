@@ -146,7 +146,7 @@ the line, untouched source right; drag the line to move the split. **Integer
 scale** locks the preview to a whole multiple of the downscale so every
 scanline is the same height on screen, letterboxing the rest. **Zoom** (or
 Alt+scroll over the preview, which zooms about the cursor) magnifies; drag
-(Space-drag or middle-drag when Compare is on) pans, and a double-click on
+(Alt-drag or middle-drag when Compare is on) pans, and a double-click on
 the preview or a click on the percentage resets both. While anything
 exports — a movie or a PNG — the Export button becomes a progress bar with a
 **Cancel** beside it; while a file is being opened, a spinner with its name

@@ -205,10 +205,22 @@ fn track(app: &mut VhsStudioApp, ui: &mut egui::Ui) {
     );
 
     if keys.is_empty() {
+        // Without keys the timeline still does something on a still: it is
+        // the length of a video exported from it (the "loop" presets ship
+        // this way, animated by the tape noise alone). Say so, or the empty
+        // bar reads as a preset that forgot its keyframes.
+        let hint = if app.video.is_some() {
+            "No keyframes: dial in a look, then press Keyframe to animate it".to_string()
+        } else {
+            let (_, fps) = app.effective_timeline();
+            format!(
+                "No keyframes: exports as {duration:.1} s at {fps:.0} fps of VHS motion.                  Dial in a look and press Keyframe to animate settings too"
+            )
+        };
         painter.text(
             egui::pos2(rect.center().x, track_y + 14.0),
             egui::Align2::CENTER_TOP,
-            "Dial in a look, then press Keyframe to set one",
+            hint,
             egui::FontId::proportional(11.0),
             ui.visuals().weak_text_color(),
         );

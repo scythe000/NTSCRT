@@ -342,11 +342,7 @@ impl VhsStudioApp {
         if !self.timeline_playing || self.video.is_some() {
             return;
         }
-        let (duration, fps) = self.effective_timeline();
-        let total = (duration * fps).round().max(1.0);
-        let step = frames as f64 / total;
-        let next = self.playhead + step;
-        self.playhead = if next > 1.0 { 0.0 } else { next };
+        self.playhead = next_playhead(self.playhead, frames, self.effective_frame_count());
         if !self.animate {
             self.frame_count = self.frame_count.wrapping_add(frames as usize);
         }
@@ -360,5 +356,42 @@ impl VhsStudioApp {
             return;
         }
         self.timeline_playing = !self.timeline_playing;
+    }
+}
+
+/// The preview's playhead after `frames` more frames of a `total`-frame
+/// animation. Rendered frame i sits at i / (total - 1), so the preview steps
+/// by that and wraps after the last frame: the loop is exactly `total` frames
+/// long and every position it shows is one an export renders.
+fn next_playhead(playhead: f64, frames: u32, total: usize) -> f64 {
+    if total <= 1 {
+        return 0.0;
+    }
+    let next = playhead + frames as f64 / (total - 1) as f64;
+    if next > 1.0 + 1e-9 { 0.0 } else { next }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_playhead;
+
+    #[test]
+    fn the_loop_visits_each_rendered_frame_once() {
+        let total = 4; // frames at t = 0, 1/3, 2/3, 1
+        let mut t = 0.0;
+        let mut seen = vec![t];
+        for _ in 0..3 {
+            t = next_playhead(t, 1, total);
+            seen.push(t);
+        }
+        assert!((seen[3] - 1.0).abs() < 1e-9, "{seen:?}");
+        assert_eq!(next_playhead(t, 1, total), 0.0, "wraps after the last frame");
+    }
+
+    #[test]
+    fn a_slow_display_skips_ahead_and_a_single_frame_stays_put() {
+        assert!((next_playhead(0.0, 2, 5) - 0.5).abs() < 1e-9);
+        assert_eq!(next_playhead(0.7, 1, 1), 0.0);
+        assert_eq!(next_playhead(0.0, 1, 0), 0.0);
     }
 }

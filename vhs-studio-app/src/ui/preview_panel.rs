@@ -114,11 +114,13 @@ pub fn show(app: &mut VhsStudioApp, root: &mut egui::Ui, rs: Option<&RenderState
         let (image_rect, pan) = frame(rect, chain, app.zoom, app.pan, app.integer_scale);
         app.pan = pan;
 
-        // Pan: Space-drag, middle-drag, or a plain drag when Compare is off.
-        let (space, middle) = ui.input(|i| {
-            (i.key_down(egui::Key::Space), i.pointer.button_down(egui::PointerButton::Middle))
+        // Pan: Alt-drag, middle-drag, or a plain drag when Compare is off.
+        // Not Space: that is play/pause, and holding it to pan a video
+        // would toggle playback on the way down.
+        let (alt, middle) = ui.input(|i| {
+            (i.modifiers.alt, i.pointer.button_down(egui::PointerButton::Middle))
         });
-        let panning = response.dragged() && (space || middle || !app.compare);
+        let panning = response.dragged() && (alt || middle || !app.compare);
         if panning {
             app.pan += response.drag_delta();
         }
