@@ -127,7 +127,7 @@ fn controls(app: &mut VhsStudioApp, ui: &mut egui::Ui) {
                     .show_ui(ui, |ui| {
                         for r in [12.0, 24.0, 30.0, 60.0] {
                             if ui.selectable_label(fps == r, format!("{r:.0} fps")).clicked() {
-                                app.timeline_mut().fps = r;
+                                app.set_timeline_fps(r);
                             }
                         }
                     });
@@ -140,7 +140,7 @@ fn controls(app: &mut VhsStudioApp, ui: &mut egui::Ui) {
                     )
                     .changed()
                 {
-                    app.timeline_mut().duration = d;
+                    app.set_timeline_duration(d);
                 }
                 ui.label(egui::RichText::new("Duration").small().weak());
             }

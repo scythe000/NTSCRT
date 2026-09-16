@@ -296,6 +296,33 @@ impl VhsStudioApp {
         self.timeline_open && self.keyframe_at_playhead().is_some()
     }
 
+    /// Length of a still's animation. Keyframes are proportional, so this
+    /// stretches the whole animation; a loaded preset's tick goes once it
+    /// has keys to stretch. A clip's length is its own (`effective_timeline`).
+    pub fn set_timeline_duration(&mut self, seconds: f64) {
+        let seconds = seconds.max(0.0);
+        if self.timeline_mut().duration == seconds {
+            return;
+        }
+        self.timeline_mut().duration = seconds;
+        if !self.timeline_keys().is_empty() {
+            self.leave_preset();
+        }
+    }
+
+    /// Frame rate of a still's animation, which decides how many frames
+    /// the keys are quantised onto. Same preset rule as the duration.
+    pub fn set_timeline_fps(&mut self, fps: f64) {
+        let fps = fps.max(1.0);
+        if self.timeline_mut().fps == fps {
+            return;
+        }
+        self.timeline_mut().fps = fps;
+        if !self.timeline_keys().is_empty() {
+            self.leave_preset();
+        }
+    }
+
     pub fn set_keyframe_easing(&mut self, index: usize, easing: Easing) {
         let tl = self.timeline_mut();
         if index < tl.keys.len() {
