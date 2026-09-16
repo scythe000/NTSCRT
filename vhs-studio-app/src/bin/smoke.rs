@@ -674,6 +674,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let source = if is_video_path(&input) {
         let video = VideoSource::open(&input)?;
         println!("{}", describe(&video));
+        // A clip's keyframes span the clip (as in the app and in --export),
+        // so the frame maps onto the clip's length, not the timeline's own.
+        if let Some(tl) = settings.timeline.as_mut() {
+            tl.fps = video.info.frame_rate.max(1.0);
+            tl.duration = video.info.total_frames as f64 / tl.fps;
+        }
         video.frame_at_index(settings.frame_count)?
     } else {
         SourceImage::load(&input).map_err(|e| format!("could not read {}: {e}", input.display()))?

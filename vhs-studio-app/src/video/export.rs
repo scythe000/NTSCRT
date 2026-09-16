@@ -277,6 +277,11 @@ pub fn export(
     };
 
     let mut sequence = renderer.begin_sequence(settings, source_size)?;
+    // A clip's keyframes span the clip, as they do in the preview and the
+    // playback producer; a still's span the timeline's own duration.
+    if video.is_some() && sequence.is_animated() {
+        sequence.set_timeline_frames(frame_count);
+    }
     let (out_w, out_h) = sequence.output_size;
 
     // yuv420p needs even dimensions, and GIF is happier with them too. The

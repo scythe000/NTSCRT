@@ -101,6 +101,15 @@ impl FrameSequence {
         if self.evaluator.is_some() { self.timeline_frames } else { 0 }
     }
 
+    /// Stretch the animation over `frames` frames instead of the timeline's
+    /// own duration × rate. A clip's keyframes are proportional to the clip
+    /// (the app maps frame `i` of a video to `t = i / (total - 1)`), so an
+    /// export of one spans the clip's frame count, not the still length the
+    /// timeline stores.
+    pub fn set_timeline_frames(&mut self, frames: u32) {
+        self.timeline_frames = frames.max(1);
+    }
+
     /// Whether the CPU signal stage runs for the frames that follow.
     ///
     /// Playback turns it off, because its background producer has already
@@ -310,15 +319,8 @@ impl HeadlessRenderer {
         source_version: Option<i64>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // An animated sequence re-dials the whole effect before every frame.
-        // Keyframe times are proportional, so the frame index maps onto the
-        // timeline's own span rather than the clip's.
         if let Some(ev) = &sequence.evaluator {
-            let total = sequence.timeline_frames.max(1);
-            let t = if total <= 1 {
-                0.0
-            } else {
-                (frame_count as u32 % total) as f64 / (total - 1) as f64
-            };
+            let t = timeline_position(frame_count, sequence.timeline_frames);
             self.ntsc.set_settings_json(&ev.ntsc_json(t))?;
             for (name, value) in ev.shader_params(t) {
                 sequence.chain.set_parameter(&name, value);
@@ -527,5 +529,43 @@ impl HeadlessRenderer {
         let (pixels, w, h) = self.render(source, settings)?;
         crate::image_io::save_png(dest, &pixels, w, h)?;
         Ok((w, h))
+    }
+}
+
+/// Where along the animation frame `frame` of a run of `total` falls,
+/// 0..=1. Keyframe times are proportional, so frame 0 is t=0 and the last
+/// frame is t=1 — the same mapping the app's preview and playback producer
+/// use (`frame / (total - 1)`). Indices past `total` wrap, so a looped
+/// export replays the animation each pass.
+fn timeline_position(frame: usize, total: u32) -> f64 {
+    let total = total.max(1);
+    if total <= 1 {
+        return 0.0;
+    }
+    (frame % total as usize) as f64 / (total - 1) as f64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::timeline_position;
+
+    #[test]
+    fn frames_span_the_animation_end_to_end() {
+        assert_eq!(timeline_position(0, 24), 0.0);
+        assert_eq!(timeline_position(23, 24), 1.0);
+        assert!((timeline_position(12, 25) - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_looped_run_replays_from_the_start() {
+        assert_eq!(timeline_position(24, 24), 0.0);
+        assert_eq!(timeline_position(47, 24), 1.0);
+    }
+
+    #[test]
+    fn a_single_frame_sits_at_the_start() {
+        assert_eq!(timeline_position(0, 1), 0.0);
+        assert_eq!(timeline_position(5, 1), 0.0);
+        assert_eq!(timeline_position(5, 0), 0.0);
     }
 }
